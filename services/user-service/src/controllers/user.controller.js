@@ -1,20 +1,28 @@
 import User from '../models/user-service.model.js';
+import DoctorProfile from '../models/DoctorProfile.js';
+import PatientProfile from '../models/PatientProfile.js';
 import bcrypt from 'bcryptjs';
 import sendVerificationEmail from '../utils/send-email.js';
 import { getCookieOptions } from '../utils/cookieConfig.js';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import {v2 as cloudinary} from 'cloudinary';
 
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 const createUser = async (req, res) => {
     try {
-        const {name,email,phoneNumber,address,password,role} = req.body;
+        const {name,email,phoneNumber,address,password,role,gender} = req.body;
 
         // Check if user already exists
         const existingUser = await User.findOne({ email });
         if (existingUser) {
             return res.status(400).json({ message: 'User with this email already exists' });
         }
-        if (!name || !email || !phoneNumber || !address || !password) {
+        if (!name || !email || !phoneNumber || !address || !password|| !gender) {
             return res.status(400).json({ message: 'All fields are required' });
         }
         // Hash the password before saving
@@ -39,7 +47,7 @@ const createUser = async (req, res) => {
       </div>
     `;
 
-        const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role ,verificationToken});
+        const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role ,verificationToken,gender});
         await user.save();
         sendVerificationEmail(email, verificationToken);
         res.status(201).json({ message: 'User created successfully' });
@@ -257,4 +265,62 @@ const resetPassword = async (req, res) => {
     }
   }
 
-export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword};
+  const uploadProfile= async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const userRole = req.user.role;
+      let profilePictureURL
+
+      if(req.file) {
+        // Convert the memory buffer of the image into a format Cloudinary understands
+      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      
+      const uploadResponse = await cloudinary.uploader.upload(base64File, {
+        folder: 'ethio_clinic_avatars', // Saves avatars to a dedicated folder
+        resource_type: 'image'
+      });
+      
+      profilePictureURL = uploadResponse.secure_url;
+
+      // 🎯 UPDATE COMMON TABLE: Save the image url directly onto the master User document
+      await User.findByIdAndUpdate(userId, { profilePicture: profilePictureURL });
+      }
+    const extraDetails = { ...req.body };
+    
+    let detailedProfile;
+
+    if (userRole === 'patient') {
+      // fields expected here from user input: address, birthDate, gender, emergencyContact
+      detailedProfile = await PatientProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraDetails },
+        { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
+      ).populate('user', 'name email phoneNumber role profilePicture');
+
+    } else if (userRole === 'doctor') {
+      // fields expected here from user input: specialization, licenseNumber, consultationFee, address
+      detailedProfile = await DoctorProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraDetails },
+        { new: true, upsert: true }
+      ).populate('user', 'name email phoneNumber role profilePicture');
+      
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
+    }
+
+    // 3. PHASE 3: Send back the unified payload response
+    return res.status(200).json({
+      success: true,
+      message: 'Onboarding profile data and picture saved successfully!',
+      data: detailedProfile
+    });
+
+  } catch (error) {
+    console.error(`❌ Unified Onboarding Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+
+export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile};
