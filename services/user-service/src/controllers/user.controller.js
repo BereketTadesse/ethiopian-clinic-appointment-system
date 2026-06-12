@@ -4,6 +4,7 @@ import PatientProfile from '../models/PatientProfile.js';
 import bcrypt from 'bcryptjs';
 import sendVerificationEmail from '../utils/send-email.js';
 import { getCookieOptions } from '../utils/cookieConfig.js';
+import redisClient from '../config/redis.js';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import {v2 as cloudinary} from 'cloudinary';
@@ -49,7 +50,7 @@ const createUser = async (req, res) => {
 
         const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role ,verificationToken,gender});
         await user.save();
-        sendVerificationEmail(email, verificationToken);
+        sendVerificationEmail(email, subject, htmlTemplate);
         res.status(201).json({ message: 'User created successfully' });
     } catch (error) {
         // Catch-all for database errors or unexpected crashes
@@ -119,55 +120,88 @@ const loginUser = async (req, res) => {
             return res.status(403).json({ message: 'Please verify your email before logging in' });
         }
 
-        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE });
+        // Generate a unique token ID so this JWT can be blacklisted or audited later
+        const tokenJti = crypto.randomUUID();
+        const token = jwt.sign(
+          { userId: user._id, jti: tokenJti }, 
+          process.env.JWT_SECRET, 
+          { expiresIn: process.env.JWT_EXPIRE }
+        );
         const cookieOptions = getCookieOptions();
-
 
         // If we get here, the user is authenticated
         return res.status(200)
-        .cookie('token', token, cookieOptions)
-        .json({ message: 'Login successful', user, token });
+          .cookie('token', token, cookieOptions)
+          .json({ message: 'Login successful', user, token, jti: tokenJti });
     } catch (error) {
         console.error(`❌ Error in loginUser: ${error.message}`);
         return res.status(500).json({ success: false, message: 'Server Error' });
     }}
 
-    const logoutUser = async (req, res) => {
+const logoutUser = async (req, res) => {
   try {
-    const cookieOptions = getCookieOptions();
-    // Logout uses the exact same security options, but wipes the token value 
-    // and sets the expiration to the Unix Epoch (1970) so the browser drops it instantly.
-    return res.status(200)
-      .cookie('token', '', { 
-        ...cookieOptions, 
-        expires: new Date(0) 
-      }) 
-      .json({
-        success: true,
-        message: 'Logged out successfully! Session cleared.'
-      });
-      
+    // 1. Grab the raw token string out of the incoming cookies
+    const token = req.cookies.token;
+
+    if (token) {
+      try {
+        // 2. Decode the token to inspect the expiration data and jti identity claim
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        if (decoded.jti) {
+          const nowInSeconds = Math.floor(Date.now() / 1000);
+          // Calculate remaining seconds until the token expires naturally
+          const remainingSeconds = decoded.exp - nowInSeconds;
+
+          // 3. 🎯 LOCK IN REDIS: If the token is still alive, blacklist it!
+          if (remainingSeconds > 0) {
+            await redisClient.set(
+              `blacklist:${decoded.jti}`, 
+              '1', 
+              { EX: remainingSeconds } // EX means expire automatically in X seconds!
+            );
+          }
+        }
+      } catch (jwtError) {
+        // If the token is already structurally corrupted or expired, skip blacklisting it
+        console.log("Token decode skipped during logout execution");
+      }
+    }
+
+    // 4. Wipe out the cookie session from the client's web browser storage
+    res.cookie('token', 'none', {
+      expires: new Date(Date.now() + 5 * 1000),
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict'
+    });
+
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Logged out cleanly. Session token blacklisted safely.' 
+    });
+
   } catch (error) {
-    console.error(`❌ Logout Controller Error: ${error.message}`);
+    console.error(`❌ Cache Blacklisting Error: ${error.message}`);
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 };
 
-const forgotPassword = async (req, res) => {
-    try {
-        const {email} = req.body;
-        if(!email){
-            return res.status(400).json({message: 'Email is required'});
-        }
-        const user = await User.findOne({email});
-        if(!user){
-            return res.status(404).json({message: 'User not found'});
-        }
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-        user.resetPasswordExpires = Date.now() + 3600000; // 1 hour from now
-        await user.save();
-        const frontendUrl = process.env.NODE_ENV === 'production'
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour from now
+    await user.save();
+    const frontendUrl = process.env.NODE_ENV === 'production'
       ? `https://your-clinic-frontend.vercel.app/reset-password/${resetToken}`
       : `http://localhost:3000/reset-password/${resetToken}`;
 
@@ -193,10 +227,10 @@ const forgotPassword = async (req, res) => {
       message: 'Password reset link sent to your email address.'
     });
 
-    } catch (error) {
-        console.error(`❌ Error in forgotPassword: ${error.message}`);
-        return res.status(500).json({ success: false, message: 'Server Error' });
-    }
+  } catch (error) {
+    console.error(`❌ Error in forgotPassword: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Server Error' });
+  }
 }
 const resetPassword = async (req, res) => {
   try {
@@ -322,5 +356,417 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id; 
 
-export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile};
+    // 1. Fetch the user from MongoDB Atlas to safely determine their role flag
+    const fullUser = await User.findById(userId);
+    if (!fullUser) {
+      return res.status(404).json({ success: false, message: 'User account not found.' });
+    }
+    const userRole = fullUser.role;
+
+    // =========================================================
+    // PHASE 1: SPLIT & UPDATE COMMON USER ROW (REGISTRATION DATA)
+    // =========================================================
+    const coreUpdateFields = {};
+
+    // Catch core registration strings if the user edited them
+    if (req.body.name) coreUpdateFields.name = req.body.name;
+    if (req.body.email) coreUpdateFields.email = req.body.email;
+    if (req.body.phoneNumber) coreUpdateFields.phoneNumber = req.body.phoneNumber;
+
+    // Handle profile picture binary file upload via Cloudinary stream pipeline
+    if (req.file) {
+      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      const uploadResponse = await cloudinary.uploader.upload(base64File, {
+        folder: 'ethio_clinic_avatars',
+        resource_type: 'image'
+      });
+      coreUpdateFields.profilePicture = uploadResponse.secure_url;
+    }
+
+    // Save changes to the core identity registry table if any changes were requested
+    if (Object.keys(coreUpdateFields).length > 0) {
+      await User.findByIdAndUpdate(userId, { $set: coreUpdateFields }, { new: true });
+    }
+
+    // =========================================================
+    // PHASE 2: SPLIT & UPDATE CUSTOM PROFILE ROW (CLINICAL DATA)
+    // =========================================================
+    // Clone body payload, but strip out registration items so they don't corrupt profile tables
+    const extraProfileDetails = { ...req.body };
+    delete extraProfileDetails.name;
+    delete extraProfileDetails.email;
+    delete extraProfileDetails.phoneNumber;
+
+    let detailedProfile;
+
+    // Route remaining specialized data fields into correct collection rows based on role
+    if (userRole === 'patient') {
+      detailedProfile = await PatientProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraProfileDetails },
+        { new: true, upsert: true } // upsert: true builds the row if it doesn't exist yet!
+      ).populate('user', 'name email phoneNumber role profilePicture');
+
+    } else if (userRole === 'doctor') {
+      detailedProfile = await DoctorProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraProfileDetails },
+        { new: true, upsert: true }
+      ).populate('user', 'name email phoneNumber role profilePicture');
+      
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
+    }
+
+    // =========================================================
+    // PHASE 3: UNIFIED CLIENT PAYLOAD DELIVERY
+    // =========================================================
+    return res.status(200).json({
+      success: true,
+      message: 'Core registration parameters and clinical profile attributes updated concurrently!',
+      data: detailedProfile
+    });
+
+  } catch (error) {
+    console.error(`❌ Complete Synchronized Update Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+const getProfileById = async (req, res) => {
+  try {
+    const targetUserId = req.params.id;
+
+    // 1. Find the core user row first to find out what their role is
+    // 🔒 select('-password') guarantees the hashed password never leaks into the network response
+    const coreUser = await User.findById(targetUserId).select('-password');
+    
+    if (!coreUser) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No user account found matching that ID.' 
+      });
+    }
+
+    const userRole = coreUser.role;
+    let combinedProfileData;
+
+    // 2. Fetch specialized data from the matching collection based on their role flag
+    if (userRole === 'patient') {
+      combinedProfileData = await PatientProfile.findOne({ user: targetUserId })
+        .populate('user', 'name email phoneNumber role profilePicture createdAt');
+
+      // Safe Fallback: If they haven't filled out profile forms yet, return an empty layout object wrapper
+      if (!combinedProfileData) {
+        combinedProfileData = { 
+          user: coreUser, 
+          address: "", 
+          birthDate: null, 
+          gender: "", 
+          emergencyContact: {} 
+        };
+      }
+
+    } else if (userRole === 'doctor') {
+      combinedProfileData = await DoctorProfile.findOne({ user: targetUserId })
+        .populate('user', 'name email phoneNumber role profilePicture createdAt');
+
+      if (!combinedProfileData) {
+        combinedProfileData = { 
+          user: coreUser, 
+          specialization: "", 
+          licenseNumber: "", 
+          consultationFee: 0, 
+          address: "" 
+        };
+      }
+    } else {
+      // Fallback for Admin accounts who only have the common User details
+      return res.status(200).json({ success: true, data: { user: coreUser } });
+    }
+
+    // 3. Return the fully populated profile record back to the frontend
+    return res.status(200).json({
+      success: true,
+      data: combinedProfileData
+    });
+
+  } catch (error) {
+    // Catch invalid MongoDB ObjectIDs cast errors safely
+    if (error.name === 'CastError') {
+      return res.status(400).json({ success: false, message: 'Invalid User ID format sent to server.' });
+    }
+    console.error(`❌ Fetch Profile By ID Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+const requestEmailUpdate =  async(req,res) => {
+  try {
+    const {newEmail , currentpassword} = req.body;
+    const userId = req.user.id
+
+    if (!newEmail || !currentpassword)
+    {
+      return res.status(400).json({success: false, message: 'Please provide the new email and your current password.'});
+    }
+
+    const user = await User.findById(userId).select('+password')
+
+    if(!user) {
+      return res.status(400).json({ success: false , message: 'the user doesnt exist'
+      })
+    }
+
+    const isMatch = await bcrypt.compare(currentpassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+    }
+    // 3. Check if the new email is already taken by another account
+    const emailExists = await User.findOne({ email: newEmail });
+    if (emailExists) {
+      return res.status(400).json({ success: false, message: 'This email address is already registered to another account.' });
+    }
+    // 4. Generate a secure temporary token
+    const rawUpdateToken = crypto.randomBytes(20).toString('hex');
+   
+    
+    // 5. 🎯 FIX: Correctly define standalone variables for your MongoDB update query
+    const hashedToken = crypto.createHash('sha256').update(rawUpdateToken).digest('hex');
+    const tokenExpiry = Date.now() + 30 * 60 * 1000; // Expires in 30 minutes
+
+    // 6. 🎯 FIX: Safely update the document directly in Atlas bypassing validation cascading
+    await User.findByIdAndUpdate(userId, {
+      $set: {
+        emailUpdateToken: hashedToken,
+        pendingEmail: newEmail,
+        emailUpdateExpire: tokenExpiry
+      }
+    });
+
+    // 6. Build the confirmation link pointing to your Vercel frontend layout
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? `https://your-clinic-frontend.vercel.app/verify-email-update/${rawUpdateToken}`
+      : `http://localhost:3000/verify-email-update/${rawUpdateToken}`;
+
+    // 7. Send the email notification via your Brevo helper
+    const subject = "Confirm Your New Email Address";
+    const htmlTemplate = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+        <h2 style="color: #3182ce;">Email Change Request</h2>
+        <p style="color: #4a5568;">You requested to update your account email to: <strong>${newEmail}</strong>.</p>
+        <p style="color: #e53e3e; font-weight: bold;">Please click the button below to verify this new address and finalize the change:</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${frontendUrl}" style="background-color: #3182ce; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Confirm New Email</a>
+        </div>
+        <p style="color: #718096; font-size: 12px;">This link will expire in 30 minutes. If you did not make this request, you can safely ignore this email.</p>
+      </div>
+    `;
+
+    await sendVerificationEmail(newEmail, subject, htmlTemplate);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Verification link sent to your new email inbox. Please confirm it to complete the update.'
+    });
+
+  } catch (error) {
+    console.error(`❌ Request Email Update Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+const confirmEmailUpdate = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // 1. Re-hash the incoming raw token from the URL parameters to match what is inside MongoDB
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // 2. Query for the user holding this token whose expiry date is still valid
+    const user = await User.findOne({
+      emailUpdateToken: hashedToken,
+      emailUpdateExpire: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired email update token.'
+      });
+    }
+
+    // 3. Double check that the pending email wasn't taken while waiting for verification
+    const emailExists = await User.findOne({ email: user.pendingEmail });
+    if (emailExists) {
+      return res.status(400).json({ success: false, message: 'This new email address has already been claimed by another account.' });
+    }
+
+// 4. 🎯 FIX: Perform the swap and clear the temporary fields directly in Atlas
+    // This completely bypasses the strict schema validation cascading rules!
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        email: user.pendingEmail // Move the verified pending email to the primary email field
+      },
+      $unset: {
+        pendingEmail: 1,       // $unset completely removes these temporary keys 
+        emailUpdateToken: 1,   // from the document so your database stays clean
+        emailUpdateExpire: 1
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Your email address has been updated successfully! You can now log in using your new email.'
+    });
+
+  } catch (error) {
+    console.error(`❌ Confirm Email Update Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+const deleteMe = async(req, res)=>{
+  try{
+    const {password} = req.body
+    const userId = req.user.id
+
+    if(!password){
+        return res.status(400).json({message: 'Please provide your current password to confirm account deletion.'});
+    }
+    const user = await User.findById(userId).select('+password')
+
+    if(!user){
+      return res.status(400).json({message: 'User account not found.'})
+    }
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if(!isMatch){
+      return res.status(401).json({ success: false, message: 'Incorrect password credentials. Deletion unauthorized.' });
+    };
+    const userRole = user.role;
+    if(userRole ==='patient'){
+await PatientProfile.findOneAndDelete({ user: userId });
+    } 
+    else if (userRole === 'doctor') {
+      await DoctorProfile.findOneAndDelete({ user: userId });
+    }
+    await User.findByIdAndDelete(userId);
+    // 5. 🧼 SESSION CLEAN-UP: Clear the HTTP-only JWT authentication cookie
+    res.cookie('token', 'none', {
+      expires: new Date(Date.now() + 10 * 1000), // Destroys cookie data within 10 seconds
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict'
+    });
+
+    return res.status(200).json({ success: true, message: 'Your account and all associated data have been permanently deleted. We\'re sorry to see you go!' });
+    }
+    catch (error) {
+    console.error(`❌ Account Elimination Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+const getUsers = async (req, res) => {
+  try {
+    // 1. Extract and sanitize Pagination Parameters (Provide fallback defaults)
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+
+    // 2. Build the Dynamic Filtering Object
+    const filterQuery = {};
+
+    // Filter by Role (e.g., ?role=doctor or ?role=patient)
+    if (req.query.role) {
+      filterQuery.role = req.query.role;
+    }
+
+    // Filter by City (Using a case-insensitive regex match for flexible search typing)
+    if (req.query.city) {
+      filterQuery.city = { $regex: req.query.city, $options: 'i' };
+    }
+
+    // Filter by Email Verification Flag (?isVerified=true)
+    if (req.query.isVerified) {
+      filterQuery.isVerified = req.query.isVerified === 'true';
+    }
+
+    // Filter by System Activity Flag (?isActive=true)
+    if (req.query.isActive) {
+      filterQuery.isActive = req.query.isActive === 'true';
+    }
+
+    // 3. Concurrently execute the database queries to drastically optimize performance
+    const [users, totalCount] = await Promise.all([
+      User.find(filterQuery)
+        .select('-password') // 🔒 Always strip out private parameters
+        .sort({ createdAt: -1 }) // Sort by newest records first
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments(filterQuery) // Gets total matching criteria count for frontend calculations
+    ]);
+
+    // 4. Build structural response payload containing metadata context indicators
+    return res.status(200).json({
+      success: true,
+      count: users.length,
+      totalCount, // 🎯 CRITICAL Requirement: Absolute historical tally matches criteria
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / limit),
+        limit
+      },
+      data: users
+    });
+
+  } catch (error) {
+    console.error(`❌ Paginated Listing Directory Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+const adminUpdateUserStatus = async(req,res) => {
+  try{
+    const {id} = req.params;
+    const {role, isActive} = req.body;
+
+    const updateFields = []
+
+    if (role !== undefined) updateFields.role = role;
+    if (isActive !== undefined) updateFields.isActive = isActive;
+
+    // 2. If the admin sent an empty request body, reject early
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please provide at least one field to update (role, isActive, or isVerified).' 
+      });
+    }
+    // 3. Update the user record directly in MongoDB Atlas
+    // { new: true, runValidators: true } ensures we get the updated document back and validate fields like role enums
+    const updatedUser = await User.findByIdAndUpdate(
+      id,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: 'Target user record not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `User security settings updated successfully.`,
+      data: updatedUser
+    });
+    }
+  catch(error){
+    console.error(`❌ Admin Status Modification Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+}
+export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile,updateProfile,getProfileById,
+  requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus};

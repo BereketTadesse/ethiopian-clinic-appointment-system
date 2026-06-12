@@ -22,7 +22,7 @@ const userSchema = new mongoose.Schema({
     },
     birthDate: {
         type: Date,
-        required: true
+        required: false
     },  
     profilePicture: {
         type: String
@@ -35,6 +35,15 @@ const userSchema = new mongoose.Schema({
     address:{
         type: String,
         required: true
+    },
+    pendingEmail: {
+        type: String,
+    },
+    emailUpdateToken: {
+        type: String,
+    },
+    emailUpdateExpire: {
+        type: Date,
     },
     
     isActive: { 

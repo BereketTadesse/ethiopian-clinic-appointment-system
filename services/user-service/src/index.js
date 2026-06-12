@@ -2,9 +2,9 @@ import './config/loadEnv.js';
 import path from 'path';
 import express from 'express';
 import connectDB from './config/db.js';
-import userRoutes from './routes/user.route.js';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import redisClient from './config/redis.js';
 
 
 
@@ -21,10 +21,29 @@ app.use(cors({
   credentials: true // 👈 MANDATORY: Grants web browsers permission to pass cookies through the origin firewall
 }));
 app.use(cookieParser());
-connectDB();
+async function start() {
+  connectDB();
 
-app.use(express.json());
-app.use('/api/users', userRoutes);
+  if (redisClient) {
+    try {
+      await redisClient.connect();
+    } catch (err) {
+      console.error('❌ Redis Connection Error:', err);
+    }
+  } else {
+    console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
+  }
+
+  app.use(express.json());
+
+  // Import routes after Redis connect attempt so rate limiter can initialize safely
+  const { default: userRoutes } = await import('./routes/user.route.js');
+  app.use('/api/users', userRoutes);
+
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+start();
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'UP', 
@@ -32,4 +51,4 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// server is started in start()
