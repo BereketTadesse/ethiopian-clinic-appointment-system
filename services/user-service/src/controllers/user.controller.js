@@ -123,7 +123,7 @@ const loginUser = async (req, res) => {
         // Generate a unique token ID so this JWT can be blacklisted or audited later
         const tokenJti = crypto.randomUUID();
         const token = jwt.sign(
-          { userId: user._id, jti: tokenJti }, 
+          { userId: user._id, jti: tokenJti, role: user.role }, 
           process.env.JWT_SECRET, 
           { expiresIn: process.env.JWT_EXPIRE }
         );
