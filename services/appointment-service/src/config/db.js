@@ -1,12 +1,18 @@
 import mongoose from 'mongoose';
+import dotenv from 'dotenv';
 
-const connectDB = async () => {
-  try {
-    const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/appointment-service';
-    await mongoose.connect(uri);
-    console.log('MongoDB connected for appointment-service');
+dotenv.config();
+
+
+
+const connectDB = async () =>{
+try {
+    // 🍃 Read the Appointment Service specific MongoDB URI
+    const conn = await mongoose.connect(process.env.APPOINTMENT_SERVICE_MONGO_URI);
+    
+    console.log(`☁️ Appointment Service connected to Cloud MongoDB Atlas: ${conn.connection.host}`);
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    console.error(`❌ Appointment Service Database Connection Error: ${error.message}`);
     process.exit(1);
   }
 };

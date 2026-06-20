@@ -21,7 +21,7 @@ function createRedisStore(prefix) {
 const authRateLimiter = ratelimit({
   store: createRedisStore('rl:auth:'),
   windowMs: 15 * 60 * 1000, // 15 Minute dynamic sliding window
-  max: 5, // Strictly caps each unique IP address to 5 requests per window
+  max: 10, // Strictly caps each unique IP address to 10 requests per window
   message: {
     success: false,
     message: "Security Alert: Too many requests from this device. Please try again after 15 minutes."

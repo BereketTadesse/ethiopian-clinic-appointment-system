@@ -7,12 +7,12 @@ dotenv.config();
 
 const connectDB = async () =>{
 try {
-    // 🍃 Updated to read the specific User Service variable name!
-    const conn = await mongoose.connect(process.env.USER_SERVICE_MONGO_URI);
+    // 🍃 Read the Clinic Service specific MongoDB URI
+    const conn = await mongoose.connect(process.env.CLINIC_SERVICE_MONGO_URI);
     
-    console.log(`☁️ User Service connected to Cloud MongoDB Atlas: ${conn.connection.host}`);
+    console.log(`☁️ Clinic Service connected to Cloud MongoDB Atlas: ${conn.connection.host}`);
   } catch (error) {
-    console.error(`❌ User Service Database Connection Error: ${error.message}`);
+    console.error(`❌ Clinic Service Database Connection Error: ${error.message}`);
     process.exit(1);
   }
 };

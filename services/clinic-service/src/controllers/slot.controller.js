@@ -1,55 +1,48 @@
 import Slot from '../models/slot.model.js';
 
-/**
- * @desc    Get all available 40-minute slots for a specific doctor on a specific date
- * @route   GET /api/slots
- * @access  Public
- */
-export const getAvailableSlots = async (req, res) => {
+export const getDoctorAvailableSlots = async (req, res) => {
   try {
-    const { doctorId, date } = req.query;
+    const doctorId = req.params.id; // Extracted directly from the path variable /:id
+    const { date } = req.query;     // Extracted from the query string (?date=...)
 
-    // 1. Validate that the required query parameters are passed
-    if (!doctorId || !date) {
+    // 1. Check that the date parameter is provided
+    if (!date) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide both doctorId and date (YYYY-MM-DD) query parameters.'
+        message: 'Validation Error: Please provide a valid target date query parameter (?date=YYYY-MM-DD).'
       });
     }
 
-    // 2. Query the database for slots matching the doctor, date, and status 'available'
-    const slots = await Slot.find({
+    // 2. Query the database to find matching records
+    // CRITICAL: Filter only for status: 'available' as specified by the requirements document!
+    const availableSlots = await Slot.find({
       doctorId,
       date,
       status: 'available'
-    }).sort({ startTime: 1 }); // Sort chronologically (e.g., 08:00 before 08:40)
+    }).sort({ startTime: 1 }); // Sorted chronologically (e.g., 08:00, 08:40)
 
+    // 3. Return the clean list to the patient frontend
     return res.status(200).json({
       success: true,
-      count: slots.length,
-      data: slots
+      count: availableSlots.length,
+      data: availableSlots
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: 'Error fetching available time slots',
+      message: 'Failed to retrieve available doctor time slots.',
       error: error.message
     });
   }
 };
 
-/**
- * @desc    Manually update a slot status (e.g., lock it when an appointment is booked)
- * @route   PATCH /api/slots/:id/status
- * @access  Private / Internal Service
- */
+
 export const updateSlotStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, appointmentId } = req.body;
 
-    // Validate incoming status rules
-    if (!['available', 'reserved', 'booked'].includes(status)) {
+    if (!['available', 'booked'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid slot status value.' });
     }
 
@@ -58,22 +51,16 @@ export const updateSlotStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Time slot record not found.' });
     }
 
-    // Update fields
     slot.status = status;
     slot.appointmentId = appointmentId || null;
-    
     await slot.save();
 
     return res.status(200).json({
       success: true,
-      message: `Slot state updated successfully to ${status}.`,
+      message: `Slot status updated successfully to ${status}.`,
       data: slot
     });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to update time slot status',
-      error: error.message
-    });
+    return res.status(500).json({ success: false, message: 'Failed to modify slot status.', error: error.message });
   }
 };

@@ -8,13 +8,16 @@ import {getAllDoctors, getDoctorById, createDoctorProfile, doctorSelfUpdate} fro
 // 🛡️ Import your shared authentication & role guards from your middleware folder
 import { protect } from '../middleware/auth.js';
 import { authorizeAdmin,authorizeDoctor } from '../middleware/auth.js';
-import { getAvailableSlots, updateSlotStatus } from '../controllers/slot.controller.js'
+import {getDoctorAvailableSlots } from '../controllers/slot.controller.js'
 const router = express.Router();
 
 
 router.get('/', getClinicProfile);
 router.get('/status', getClinicStatus);
 router.put('/updateClinicProfile', protect, authorizeAdmin, updateClinicProfile);
+
+// route for the doctors
+
 router.get('/getAllDoctors', getAllDoctors);
 router.get('/getAllDoctors/:id', getDoctorById);
 
@@ -22,9 +25,7 @@ router.post('/createDoctorProfile', protect, authorizeAdmin, createDoctorProfile
 router.patch('/me', protect, authorizeDoctor, doctorSelfUpdate);
 
 
-// Public route for patients browsing the app schedule
-router.get('/getAvailableSlots', getAvailableSlots);
+// Public route for patients browsing available doctor slots
+router.get('/:id/slots', getDoctorAvailableSlots);
 
-// Protected status modification route (used during the booking workflow)
-router.patch('/slots/:id/status', protect, updateSlotStatus);
 export default router;
