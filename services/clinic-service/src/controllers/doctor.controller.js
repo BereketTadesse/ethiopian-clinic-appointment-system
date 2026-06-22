@@ -90,15 +90,21 @@ const getDoctorById = async (req, res) => {
     // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
     let userAccountDetails = null;
     try {
-      const incomingTokenCookie = req.cookies.token;
+      const incomingToken =
+        req.cookies?.token ||
+        (req.headers.authorization?.startsWith('Bearer ')
+          ? req.headers.authorization.split(' ')[1]
+          : null);
 
       const userServiceResponse = await axios.get(
         `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
         {
-          headers: {
-            Cookie: `token=${incomingTokenCookie}`,
-            Authorization: `Bearer ${incomingTokenCookie}`
-          }
+          headers: incomingToken
+            ? {
+                Cookie: `token=${incomingToken}`,
+                Authorization: `Bearer ${incomingToken}`
+              }
+            : {}
         }
       );
       
