@@ -28,7 +28,7 @@ export const protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // 4. THE REDIS BLACKLIST BARRIER: Check if this specific token session was destroyed on logout
-    if (decoded.jti) {
+    if (decoded.jti && redisClient) {
       const isBlacklisted = await redisClient.get(`blacklist:${decoded.jti}`);
       
       if (isBlacklisted) {

@@ -3,6 +3,8 @@ import Doctor from '../models/doctor.model.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
+
 const getAllDoctors = async (req, res) => {
   try {
     const { specialization } = req.query;
@@ -91,7 +93,7 @@ const getDoctorById = async (req, res) => {
       const incomingTokenCookie = req.cookies.token;
 
       const userServiceResponse = await axios.get(
-        `http://localhost:3001/api/users/profile/${doctor.userId}`,
+        `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
         {
           headers: {
             Cookie: `token=${incomingTokenCookie}`,

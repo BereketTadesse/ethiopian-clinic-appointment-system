@@ -10,11 +10,12 @@ import { initSlotCronScheduler } from './cron/slotCron.js';
 
 const app = express();
 
-const PORT = process.env.CLINIC_PORT || 3002;
+const PORT = process.env.PORT || process.env.CLINIC_PORT || 3002;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://your-clinic-frontend.vercel.app';
 
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? 'https://your-clinic-frontend.vercel.app'
+    ? FRONTEND_URL
     : 'http://localhost:3000',
   credentials: true
 }));
@@ -50,7 +51,7 @@ async function start() {
   // Initialize cron scheduler for slot generation
   initSlotCronScheduler();
 
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
 }
 
 start();
