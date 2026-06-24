@@ -505,6 +505,41 @@ const getProfileById = async (req, res) => {
   }
 };
 
+const getPublicDoctorAccountById = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('name email phoneNumber gender address profilePicture role isActive');
+
+    if (!user || user.isActive === false || user.role !== 'doctor') {
+      return res.status(404).json({
+        success: false,
+        message: 'Public doctor account details not found.'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          name: user.name,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          gender: user.gender,
+          address: user.address,
+          profilePicture: user.profilePicture
+        }
+      }
+    });
+  } catch (error) {
+    if (error.name === 'CastError') {
+      return res.status(400).json({ success: false, message: 'Invalid User ID format sent to server.' });
+    }
+
+    console.error(`Public Doctor Account Fetch Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
 const requestEmailUpdate =  async(req,res) => {
   try {
     const {newEmail , currentpassword} = req.body;
@@ -769,4 +804,4 @@ const adminUpdateUserStatus = async(req,res) => {
   }
 }
 export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile,updateProfile,getProfileById,
-  requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus};
+  getPublicDoctorAccountById,requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus};

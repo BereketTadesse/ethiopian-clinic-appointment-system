@@ -1,7 +1,7 @@
 import express from 'express';
 import { createUser , verifyEmail,loginUser ,logoutUser,forgotPassword ,resetPassword
     ,changePassword,uploadProfile,updateProfile,getProfileById,requestEmailUpdate,
-    confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers
+    confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById
 } from '../controllers/user.controller.js';
 import { protect , authorizeAdmin } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
@@ -13,6 +13,7 @@ const router = express.Router();
 router.post('/register', authRateLimiter, createUser);
 router.post('/login', authRateLimiter, loginUser);
 router.get('/verify/:token',generalRateLimiter, verifyEmail);
+router.get('/public-doctor-account/:id', generalRateLimiter, getPublicDoctorAccountById);
 router.post('/logout', authRateLimiter, logoutUser);
 router.post('/forgot-password', authRateLimiter, forgotPassword);
 router.post('/reset-password/:token',generalRateLimiter, resetPassword);

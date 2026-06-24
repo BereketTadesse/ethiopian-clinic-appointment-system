@@ -90,22 +90,8 @@ const getDoctorById = async (req, res) => {
     // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
     let userAccountDetails = null;
     try {
-      const incomingToken =
-        req.cookies?.token ||
-        (req.headers.authorization?.startsWith('Bearer ')
-          ? req.headers.authorization.split(' ')[1]
-          : null);
-
       const userServiceResponse = await axios.get(
-        `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
-        {
-          headers: incomingToken
-            ? {
-                Cookie: `token=${incomingToken}`,
-                Authorization: `Bearer ${incomingToken}`
-              }
-            : {}
-        }
+        `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor.userId}`
       );
       
       const resBody = userServiceResponse.data;
@@ -116,7 +102,9 @@ const getDoctorById = async (req, res) => {
       }
     } catch (apiError) {
       // Safe fallback log so the endpoint still responds even if User Service experiences downtime
-      console.error(`⚠️ Failed to fetch account details from User Service: ${apiError.message}`);
+      console.error(
+        `Failed to fetch account details from User Service: ${apiError.response?.status || 'NO_STATUS'} ${apiError.response?.data?.message || apiError.message}`
+      );
     }
 
     // 3. Combine both data sources into a single clean unified response
