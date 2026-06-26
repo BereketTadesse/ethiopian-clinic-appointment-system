@@ -66,22 +66,32 @@ const createDoctorProfile = async (req, res) => {
 };
 const getDoctorById = async (req, res) => {
   try {
-    const { id } = req.params;
+    // ⚠️ CRITICAL CHECK: Make sure 'id' matches the exact word used in your router!
+    // If your route is router.get('/getAllDoctors/:id', ...) use { id }.
+    // If your route is router.get('/getAllDoctors/:doctorId', ...) use const { doctorId: id } = req.params;
+    const { id } = req.params; 
     let doctor = null;
 
-    // 1. Find the clinical profile record locally in the Clinic DB
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'No ID parameter provided in request.' });
+    }
+
+    // 1. Try finding by Doctor Table Primary ID (_id)
     if (mongoose.Types.ObjectId.isValid(id)) {
       doctor = await Doctor.findById(id);
     }
 
-    // If not found by doctor table primary ID, allow matching by linked userId
-    if (!doctor) {
-      doctor = await Doctor.findOne({ userId: id });
+    // 2. Fallback: Try matching by linked userId explicitly converted to a real ObjectId
+    if (!doctor && mongoose.Types.ObjectId.isValid(id)) {
+      const targetObjectId = new mongoose.Types.ObjectId(id);
+      doctor = await Doctor.findOne({ userId: targetObjectId });
     }
 
-    // Guard checks for availability
     if (!doctor) {
-      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+      return res.status(404).json({ 
+        success: false, 
+        message: `Doctor profile not found. Attempted search using provided ID: ${id}` 
+      });
     }
     if (doctor.isActive === false) {
       return res.status(404).json({ success: false, message: 'Doctor profile is inactive.' });
