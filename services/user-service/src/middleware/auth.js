@@ -8,14 +8,15 @@ import redisClient from '../config/redis.js'; // 🎯 Make sure this points to y
 export const protect = async (req, res, next) => {
   let token;
 
-  // 1. Extract the token straight out of the incoming request cookies
-  if (req.cookies && req.cookies.token) {
-    token = req.cookies.token;
-  } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+ if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     token = req.headers.authorization.split(' ')[1];
+  } 
+  // 2. Fallback to cookies if no header token exists
+  else if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
   }
 
-  // 2. If no cookie token is present, block entry immediately
+  // 2. If no token is present, block entry immediately
   if (!token) {
     return res.status(401).json({
       success: false,

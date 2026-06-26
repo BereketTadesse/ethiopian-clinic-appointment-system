@@ -126,19 +126,7 @@ const getDoctorById = async (req, res) => {
       }
     }
 
-    // Fallback: If no token was found or the protected endpoint rejected it, try the public route
-    if (!userServiceResponse) {
-      try {
-        userServiceResponse = await axios.get(
-          `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor.userId}`
-        );
-        console.log("➡️ Successfully fetched profile via public fallback route!");
-      } catch (publicError) {
-        console.error(
-          `❌ Public fallback fetch failed: ${publicError.response?.status || 'NO_STATUS'} - ${JSON.stringify(publicError.response?.data || publicError.message)}`
-        );
-      }
-    }
+
 
     // Process the data if one of our network calls succeeded
     if (userServiceResponse && userServiceResponse.data) {
