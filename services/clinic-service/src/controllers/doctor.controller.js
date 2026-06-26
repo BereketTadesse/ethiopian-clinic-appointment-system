@@ -90,9 +90,37 @@ const getDoctorById = async (req, res) => {
     // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
     let userAccountDetails = null;
     try {
-      const userServiceResponse = await axios.get(
-        `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor.userId}`
-      );
+      const incomingToken =
+        req.cookies?.token ||
+        (req.headers.authorization?.startsWith('Bearer ')
+          ? req.headers.authorization.split(' ')[1]
+          : null);
+
+      let userServiceResponse;
+
+      if (incomingToken) {
+        try {
+          userServiceResponse = await axios.get(
+            `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
+            {
+              headers: {
+                Cookie: `token=${incomingToken}`,
+                Authorization: `Bearer ${incomingToken}`
+              }
+            }
+          );
+        } catch (profileError) {
+          console.error(
+            `Protected user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} ${profileError.response?.data?.message || profileError.message}`
+          );
+        }
+      }
+
+      if (!userServiceResponse) {
+        userServiceResponse = await axios.get(
+          `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor.userId}`
+        );
+      }
       
       const resBody = userServiceResponse.data;
 
