@@ -8,8 +8,8 @@ import redisClient from './config/redis.js';
 
 const app = express();
 
-// 🎯 Render automatically passes an optimized PORT variable (usually 10000). 
-// We must bind to '0.0.0.0' so it is visible outside the Docker container boundary!
+app.set('trust proxy', 1); // ✅ Trust first proxy hop (Docker gateway / Render's load balancer)
+
 const PORT = process.env.PORT || 3001;
 
 // 1. Global Middleware Layers
@@ -23,7 +23,7 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json());
 
-// 2. 🚀 CRITICAL PROBE CHECK: Define the health route IMMEDIATELY so Render gets an instant 200 OK
+// 2. 🚀 CRITICAL PROBE CHECK
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'UP', 
@@ -35,13 +35,10 @@ app.get('/health', (req, res) => {
 // 3. Asynchronous Database Initializer and Listener Launcher
 async function start() {
   try {
-    // Connect to MongoDB Atlas
     await connectDB();
 
-    // Connect to your newly configured Render Key-Value Redis store
     if (redisClient) {
       try {
-        // Only run connect if it hasn't been initialized somewhere else already
         if (!redisClient.isOpen) {
           await redisClient.connect();
           console.log('⚡ User Service connected to Render Redis store successfully!');
@@ -54,11 +51,9 @@ async function start() {
       console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
     }
 
-    // Dynamic import of your user endpoint definitions
     const { default: userRoutes } = await import('./routes/user.route.js');
     app.use('/api/users', userRoutes);
 
-    // 🎯 Start the listener bound explicitly to 0.0.0.0 interface
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Production microservice listening cleanly on address interface 0.0.0.0:${PORT}`);
     });
