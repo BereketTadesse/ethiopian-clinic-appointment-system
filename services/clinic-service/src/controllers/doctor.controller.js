@@ -87,52 +87,61 @@ const getDoctorById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Doctor profile is inactive.' });
     }
 
-    // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
+   // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
     let userAccountDetails = null;
-    try {
-      const incomingToken =
-        req.cookies?.token ||
-        (req.headers.authorization?.startsWith('Bearer ')
-          ? req.headers.authorization.split(' ')[1]
-          : null);
+    let userServiceResponse = null;
 
-      let userServiceResponse;
+    // Isolate the incoming token string cleanly
+    const incomingToken = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.split(' ')[1]
+      : (req.cookies?.token || null);
 
-      if (incomingToken) {
-        try {
-          userServiceResponse = await axios.get(
-            `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
-            {
-              headers: {
-                Cookie: `token=${incomingToken}`,
-                Authorization: `Bearer ${incomingToken}`
-              }
+    // Attempt Protected Fetch first if a token exists
+    if (incomingToken) {
+      try {
+        userServiceResponse = await axios.get(
+          `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
+          {
+            headers: {
+              // Standard Header authorization for microservice inter-communication
+              Authorization: `Bearer ${incomingToken}`
             }
-          );
-        } catch (profileError) {
-          console.error(
-            `Protected user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} ${profileError.response?.data?.message || profileError.message}`
-          );
-        }
+          }
+        );
+        console.log("➡️ Successfully fetched profile via authenticated route!");
+      } catch (profileError) {
+        console.error(
+          `⚠️ Authenticated user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} - ${JSON.stringify(profileError.response?.data || profileError.message)}`
+        );
       }
+    }
 
-      if (!userServiceResponse) {
+    // Fallback: If no token was found or the protected endpoint rejected it, try the public route
+    if (!userServiceResponse) {
+      try {
         userServiceResponse = await axios.get(
           `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor.userId}`
         );
+        console.log("➡️ Successfully fetched profile via public fallback route!");
+      } catch (publicError) {
+        console.error(
+          `❌ Public fallback fetch failed: ${publicError.response?.status || 'NO_STATUS'} - ${JSON.stringify(publicError.response?.data || publicError.message)}`
+        );
       }
-      
+    }
+
+    // Process the data if one of our network calls succeeded
+    if (userServiceResponse && userServiceResponse.data) {
       const resBody = userServiceResponse.data;
 
-      // 🎯 EXACT NESTING MATCH: Extract user details based on your terminal log structure
-      if (resBody && resBody.success && resBody.data && resBody.data.user) {
-        userAccountDetails = resBody.data.user;
+      // Robust mapping: Checks if data is nested under resBody.data.user OR directly under resBody.data
+      if (resBody.success) {
+        if (resBody.data?.user) {
+          userAccountDetails = resBody.data.user;
+        } else if (resBody.data) {
+          userAccountDetails = resBody.data;
+        }
       }
-    } catch (apiError) {
-      // Safe fallback log so the endpoint still responds even if User Service experiences downtime
-      console.error(
-        `Failed to fetch account details from User Service: ${apiError.response?.status || 'NO_STATUS'} ${apiError.response?.data?.message || apiError.message}`
-      );
     }
 
     // 3. Combine both data sources into a single clean unified response
