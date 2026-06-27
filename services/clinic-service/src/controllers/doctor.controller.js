@@ -17,10 +17,58 @@ const getAllDoctors = async (req, res) => {
 
     const doctors = await Doctor.find(queryFilter);
 
+    const incomingToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : (req.cookies?.token || null);
+
+    // Iterate through each doctor and fetch their accountDetails from User Service
+    const doctorsWithDetails = await Promise.all(
+      doctors.map(async (doctor) => {
+        let userAccountDetails = null;
+
+        if (incomingToken) {
+          try {
+            const userServiceResponse = await axios.get(
+              `${USER_SERVICE_URL}/api/users/profile/${doctor._id}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${incomingToken}`
+                }
+              }
+            );
+
+            if (userServiceResponse.data && userServiceResponse.data.success) {
+              const resBody = userServiceResponse.data;
+              // Handles nested user details object safely
+              if (resBody.data?.user) {
+                userAccountDetails = resBody.data.user;
+              } else if (resBody.data) {
+                userAccountDetails = resBody.data;
+              }
+            }
+          } catch (profileError) {
+            console.error(
+              `⚠️ Profile fetch failed for doctor ${doctor._id}: ${profileError.message}`
+            );
+          }
+        }
+
+        return {
+          ...doctor.toObject(),
+          userId: doctor._id, // Backward compatibility
+          accountDetails: userAccountDetails ? {
+            fullName: userAccountDetails.name,
+            email: userAccountDetails.email ? userAccountDetails.email.trim() : null,
+            phoneNumber: userAccountDetails.phoneNumber,
+            gender: userAccountDetails.gender,
+            address: userAccountDetails.address
+          } : "Account details temporarily unavailable"
+        };
+      })
+    );
+
     return res.status(200).json({
       success: true,
       count: doctors.length,
-      data: doctors
+      data: doctorsWithDetails
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error retrieving doctor lists', error: error.message });
@@ -28,49 +76,49 @@ const getAllDoctors = async (req, res) => {
 };
 
 const createDoctorProfile = async (req, res) => {
-    try {
-        const { userId, specialization, licenseNumber, yearsOfExperience, bio, availableDays, startTime, endTime, breakStart, breakEnd } = req.body;
+  try {
+    const { userId, specialization, licenseNumber, yearsOfExperience, bio, availableDays, startTime, endTime, breakStart, breakEnd } = req.body;
 
-        const existingDoctor = await Doctor.findById(userId);
+    const existingDoctor = await Doctor.findById(userId);
 
-        if (existingDoctor) {
-            return res.status(400).json({ success: false, message: 'A doctor profile already exists for this user.' });
-        }
-
-        const existingLicense = await Doctor.findOne({ licenseNumber });
-        if(existingLicense){
-            return res.status(400).json({ success: false, message: 'This medical license number is already registered.' });
-        }
-        const newDoctor = await Doctor.create({
-            _id: userId,
-            specialization,
-            licenseNumber,
-            yearsOfExperience,
-            bio,
-            availableDays,
-            startTime,
-            endTime,
-            breakStart,
-            breakEnd
-        });
-        return res.status(201).json({
-            success: true,
-            message: 'Doctor clinical profile established successfully.',
-            data: {
-                ...newDoctor.toObject(),
-                userId: newDoctor._id // backward compatibility
-            }
-        });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: 'Error creating doctor profile', error: error.message });
+    if (existingDoctor) {
+      return res.status(400).json({ success: false, message: 'A doctor profile already exists for this user.' });
     }
+
+    const existingLicense = await Doctor.findOne({ licenseNumber });
+    if (existingLicense) {
+      return res.status(400).json({ success: false, message: 'This medical license number is already registered.' });
+    }
+    const newDoctor = await Doctor.create({
+      _id: userId,
+      specialization,
+      licenseNumber,
+      yearsOfExperience,
+      bio,
+      availableDays,
+      startTime,
+      endTime,
+      breakStart,
+      breakEnd
+    });
+    return res.status(201).json({
+      success: true,
+      message: 'Doctor clinical profile established successfully.',
+      data: {
+        ...newDoctor.toObject(),
+        userId: newDoctor._id // backward compatibility
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error creating doctor profile', error: error.message });
+  }
 };
 const getDoctorById = async (req, res) => {
   try {
     // ⚠️ CRITICAL CHECK: Make sure 'id' matches the exact word used in your router!
     // If your route is router.get('/getAllDoctors/:id', ...) use { id }.
     // If your route is router.get('/getAllDoctors/:doctorId', ...) use const { doctorId: id } = req.params;
-    const { id } = req.params; 
+    const { id } = req.params;
     let doctor = null;
 
     if (!id) {
@@ -81,16 +129,16 @@ const getDoctorById = async (req, res) => {
     doctor = await Doctor.findById(id);
 
     if (!doctor) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Doctor profile not found. Attempted search using provided ID: ${id}` 
+      return res.status(404).json({
+        success: false,
+        message: `Doctor profile not found. Attempted search using provided ID: ${id}`
       });
     }
     if (doctor.isActive === false) {
       return res.status(404).json({ success: false, message: 'Doctor profile is inactive.' });
     }
 
-   // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
+    // 2. 🚀 STITCH DATA: Fetch the personal account details from the User Service
     let userAccountDetails = null;
     let userServiceResponse = null;
 
@@ -101,22 +149,22 @@ const getDoctorById = async (req, res) => {
 
     // Attempt Protected Fetch first if a token exists
     if (incomingToken) {
-        try {
-          userServiceResponse = await axios.get(
-            `${USER_SERVICE_URL}/api/users/profile/${doctor._id}`,
-            {
-              headers: {
-                // Standard Header authorization for microservice inter-communication
-                Authorization: `Bearer ${incomingToken}`
-              }
+      try {
+        userServiceResponse = await axios.get(
+          `${USER_SERVICE_URL}/api/users/profile/${doctor._id}`,
+          {
+            headers: {
+              // Standard Header authorization for microservice inter-communication
+              Authorization: `Bearer ${incomingToken}`
             }
-          );
-          console.log("➡️ Successfully fetched profile via authenticated route!");
-        } catch (profileError) {
-          console.error(
-            `⚠️ Authenticated user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} - ${JSON.stringify(profileError.response?.data || profileError.message)}`
-          );
-        }
+          }
+        );
+        console.log("➡️ Successfully fetched profile via authenticated route!");
+      } catch (profileError) {
+        console.error(
+          `⚠️ Authenticated user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} - ${JSON.stringify(profileError.response?.data || profileError.message)}`
+        );
+      }
     }
 
 
@@ -150,7 +198,7 @@ const getDoctorById = async (req, res) => {
         startTime: doctor.startTime,
         endTime: doctor.endTime,
         isAcceptingPatients: doctor.isAcceptingPatients,
-        
+
         // Personal profile details stitched dynamically from User Service DB
         accountDetails: userAccountDetails ? {
           fullName: userAccountDetails.name,
@@ -163,10 +211,10 @@ const getDoctorById = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Error retrieving doctor profile', 
-      error: error.message 
+    return res.status(500).json({
+      success: false,
+      message: 'Error retrieving doctor profile',
+      error: error.message
     });
   }
 };
@@ -206,4 +254,4 @@ const doctorSelfUpdate = async (req, res) => {
 };
 
 
-export {getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate};
+export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate };
