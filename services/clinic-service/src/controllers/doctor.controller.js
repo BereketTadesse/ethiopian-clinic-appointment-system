@@ -31,35 +31,36 @@ const createDoctorProfile = async (req, res) => {
     try {
         const { userId, specialization, licenseNumber, yearsOfExperience, bio, availableDays, startTime, endTime, breakStart, breakEnd } = req.body;
 
-        const existingDoctor = await Doctor.findOne({ userId });
+        const existingDoctor = await Doctor.findById(userId);
 
         if (existingDoctor) {
             return res.status(400).json({ success: false, message: 'A doctor profile already exists for this user.' });
         }
 
-        const existingLicense = await Doctor.findOne({ licenseNumber }
-
-        );
+        const existingLicense = await Doctor.findOne({ licenseNumber });
         if(existingLicense){
             return res.status(400).json({ success: false, message: 'This medical license number is already registered.' });
         }
         const newDoctor = await Doctor.create({
-            userId,
-      specialization,
-      licenseNumber,
-      yearsOfExperience,
-      bio,
-      availableDays,
-      startTime,
-      endTime,
-      breakStart,
-      breakEnd
-        })
-    return res.status(201).json({
-        success: true,
-        message: 'Doctor clinical profile established successfully.',
-        data: newDoctor
-    });
+            _id: userId,
+            specialization,
+            licenseNumber,
+            yearsOfExperience,
+            bio,
+            availableDays,
+            startTime,
+            endTime,
+            breakStart,
+            breakEnd
+        });
+        return res.status(201).json({
+            success: true,
+            message: 'Doctor clinical profile established successfully.',
+            data: {
+                ...newDoctor.toObject(),
+                userId: newDoctor._id // backward compatibility
+            }
+        });
     } catch (error) {
         return res.status(500).json({ success: false, message: 'Error creating doctor profile', error: error.message });
     }
@@ -76,16 +77,8 @@ const getDoctorById = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No ID parameter provided in request.' });
     }
 
-    // 1. Try finding by Doctor Table Primary ID (_id)
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      doctor = await Doctor.findById(id);
-    }
-
-    // 2. Fallback: Try matching by linked userId explicitly converted to a real ObjectId
-    if (!doctor && mongoose.Types.ObjectId.isValid(id)) {
-      const targetObjectId = new mongoose.Types.ObjectId(id);
-      doctor = await Doctor.findOne({ userId: targetObjectId });
-    }
+    // Look up the Doctor by ID directly (since _id is the User ID string)
+    doctor = await Doctor.findById(id);
 
     if (!doctor) {
       return res.status(404).json({ 
@@ -108,22 +101,22 @@ const getDoctorById = async (req, res) => {
 
     // Attempt Protected Fetch first if a token exists
     if (incomingToken) {
-      try {
-        userServiceResponse = await axios.get(
-          `${USER_SERVICE_URL}/api/users/profile/${doctor.userId}`,
-          {
-            headers: {
-              // Standard Header authorization for microservice inter-communication
-              Authorization: `Bearer ${incomingToken}`
+        try {
+          userServiceResponse = await axios.get(
+            `${USER_SERVICE_URL}/api/users/profile/${doctor._id}`,
+            {
+              headers: {
+                // Standard Header authorization for microservice inter-communication
+                Authorization: `Bearer ${incomingToken}`
+              }
             }
-          }
-        );
-        console.log("➡️ Successfully fetched profile via authenticated route!");
-      } catch (profileError) {
-        console.error(
-          `⚠️ Authenticated user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} - ${JSON.stringify(profileError.response?.data || profileError.message)}`
-        );
-      }
+          );
+          console.log("➡️ Successfully fetched profile via authenticated route!");
+        } catch (profileError) {
+          console.error(
+            `⚠️ Authenticated user profile fetch failed: ${profileError.response?.status || 'NO_STATUS'} - ${JSON.stringify(profileError.response?.data || profileError.message)}`
+          );
+        }
     }
 
 
@@ -148,7 +141,7 @@ const getDoctorById = async (req, res) => {
       data: {
         // Clinical schedule details (Clinic Service DB)
         _id: doctor._id,
-        userId: doctor.userId,
+        userId: doctor._id, // Keep userId field here for backward compatibility
         specialization: doctor.specialization,
         licenseNumber: doctor.licenseNumber,
         yearsOfExperience: doctor.yearsOfExperience,
@@ -181,7 +174,7 @@ const getDoctorById = async (req, res) => {
 const doctorSelfUpdate = async (req, res) => {
   try {
     // req.user.id comes from your corrected protect middleware (the logged-in doctor's userId string)
-    let doctor = await Doctor.findOne({ userId: req.user.id });
+    let doctor = await Doctor.findById(req.user.id);
 
     if (!doctor || !doctor.isActive) {
       return res.status(404).json({ success: false, message: 'Clinical profile data not found.' });

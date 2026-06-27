@@ -2,11 +2,9 @@ import mongoose from 'mongoose';
 
 const doctorSchema = new mongoose.Schema(
   {
-    userId: {
-      type: String, // Stores the unique _id string from your MongoDB User Service
-      required: [true, 'User ID link from User Service is required'],
-      unique: true,
-      index: true
+    _id: {
+      type: String, // Stores the unique User ID string from User Service as the primary key
+      required: [true, 'User ID link from User Service is required']
     },
     specialization: {
       type: String,
