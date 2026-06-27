@@ -35,10 +35,10 @@ export const generateSlotsForDoctor = async (doctor, dateStr) => {
 
     // 🥪 LUNCH BREAK GUARD: If the slot overlaps with the lunch break, step over it
     if (breakStartMinutes !== null && breakEndMinutes !== null) {
-      // Check if the slot starts during lunch, or ends during lunch, or wraps around lunch
-      const overlapsBreak = (slotStart >= breakStartMinutes && slotStart < breakEndMinutes) ||
-                            (slotEnd > breakStartMinutes && slotEnd <= breakEndMinutes);
-      
+      // Standard interval overlap formula: A overlaps B if A.start < B.end AND A.end > B.start
+      // This correctly handles all 3 cases: slot starts in break, ends in break, or wraps around break
+      const overlapsBreak = slotStart < breakEndMinutes && slotEnd > breakStartMinutes;
+
       if (overlapsBreak) {
         // Skip straight to the end of the lunch break window and check the next slot
         currentMinutes = breakEndMinutes;

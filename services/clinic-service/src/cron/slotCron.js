@@ -36,12 +36,13 @@ const getEthiopianTargetDateInfo = (daysAhead = 1) => {
  * Background Task Rule: Scans all active medical personnel schedules 
  * and pre-allocates empty 40-minute blocks for the target day.
  */
-export const runDailySlotAllocation = async () => {
+export const runDailySlotAllocation = async (daysAhead = 1) => {
   try {
-    // We calculate the schedule for Tomorrow (1 day ahead)
-    const { dateString, dayName } = getEthiopianTargetDateInfo(1);
-    
-    console.log(`⏰ [Cron System] Initiating automatic slot inventory allocation for tomorrow: ${dateString} (${dayName})...`);
+    // We calculate the schedule for the target day (default = tomorrow)
+    const { dateString, dayName } = getEthiopianTargetDateInfo(daysAhead);
+    const label = daysAhead === 0 ? 'today' : daysAhead === 1 ? 'tomorrow' : `${daysAhead} days ahead`;
+
+    console.log(`⏰ [Cron System] Initiating automatic slot inventory allocation for ${label}: ${dateString} (${dayName})...`);
 
     // 1. Fetch only doctors who are active and currently accepting patients
     const activeDoctors = await Doctor.find({ isActive: true, isAcceptingPatients: true });
@@ -55,7 +56,8 @@ export const runDailySlotAllocation = async () => {
 
     // 2. Loop through every doctor and check if they work on that day of the week
     for (const doctor of activeDoctors) {
-      if (doctor.availableDays.includes(dayName)) {
+      // Case-insensitive comparison — handles 'monday' and 'Monday' equally
+      if (doctor.availableDays.map(d => d.toLowerCase()).includes(dayName.toLowerCase())) {
         await generateSlotsForDoctor(doctor, dateString);
         generatedCount++;
       }

@@ -6,7 +6,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import redisClient from './config/redis.js';
 import clinicRoutes from './routes/clinic.routes.js';
-import { initSlotCronScheduler } from './cron/slotCron.js';
+import { initSlotCronScheduler, runDailySlotAllocation } from './cron/slotCron.js';
 
 const app = express();
 
@@ -48,8 +48,15 @@ async function start() {
     });
   });
 
-  // Initialize cron scheduler for slot generation
+  // Initialize cron scheduler for midnight automatic slot generation
   initSlotCronScheduler();
+
+  // 🚀 Run slot generation immediately on startup so slots exist right away.
+  // Today (daysAhead=0)   → patients can book NOW
+  // Tomorrow (daysAhead=1) → pre-populate the next day's schedule
+  // Safe to call multiple times: MongoDB unique index prevents any duplicates.
+  runDailySlotAllocation(0); // today
+  runDailySlotAllocation(1); // tomorrow
 
   app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
 }
