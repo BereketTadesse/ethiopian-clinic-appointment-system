@@ -23,7 +23,7 @@ app.use(cors({
 app.use(cookieParser());
 
 async function start() {
-  connectDB();
+  await connectDB(); // ⚠️ Must await — slot generation below needs the DB to be ready
 
   if (redisClient) {
     try {
