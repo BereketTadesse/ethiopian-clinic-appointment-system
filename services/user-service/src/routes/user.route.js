@@ -21,6 +21,7 @@ router.post('/change-password', protect,generalRateLimiter, changePassword);
 router.post('/upload-profile', protect, generalRateLimiter, upload.single('profilePicture'), uploadProfile);
 router.put('/update-profile', protect, generalRateLimiter, upload.single('profilePicture'), updateProfile);
 router.get('/profile/:id', protect, generalRateLimiter, getProfileById);
+router.get('/getPublicDoctorAccountById/:id',generalRateLimiter ,getPublicDoctorAccountById);
 router.post('/request-email-update', protect,authRateLimiter, requestEmailUpdate);
 router.get('/confirm-email-update/:token', confirmEmailUpdate);
 router.delete('/delete-me', protect, generalRateLimiter, deleteMe);
