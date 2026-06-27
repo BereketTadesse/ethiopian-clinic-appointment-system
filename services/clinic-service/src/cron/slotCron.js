@@ -54,12 +54,16 @@ export const runDailySlotAllocation = async (daysAhead = 1) => {
 
     let generatedCount = 0;
 
+    console.log(`📋 [Cron System] Found ${activeDoctors.length} active doctor(s). Checking availability for ${dayName}...`);
+
     // 2. Loop through every doctor and check if they work on that day of the week
     for (const doctor of activeDoctors) {
       // Case-insensitive comparison — handles 'monday' and 'Monday' equally
       if (doctor.availableDays.map(d => d.toLowerCase()).includes(dayName.toLowerCase())) {
         await generateSlotsForDoctor(doctor, dateString);
         generatedCount++;
+      } else {
+        console.log(`⏭️  [Cron System] Doctor ${doctor._id} skipped — not scheduled on ${dayName}. Their days: [${doctor.availableDays.join(', ')}]`);
       }
     }
 
