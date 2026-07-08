@@ -27,7 +27,7 @@ const getAllDoctors = async (req, res) => {
         if (incomingToken) {
           try {
             const userServiceResponse = await axios.get(
-              `${USER_SERVICE_URL}/api/users//getPublicDoctorAccountById/${doctor._id}`,
+              `${USER_SERVICE_URL}/api/users//public-doctor-account/${doctor._id}`,
               {
                 headers: {
                   Authorization: `Bearer ${incomingToken}`
