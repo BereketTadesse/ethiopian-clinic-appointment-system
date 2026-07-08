@@ -24,31 +24,31 @@ const getAllDoctors = async (req, res) => {
       doctors.map(async (doctor) => {
         let userAccountDetails = null;
 
-        if (incomingToken) {
-          try {
-            const userServiceResponse = await axios.get(
-              `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor._id}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${incomingToken}`
-                }
-              }
-            );
+        // The public-doctor-account route requires no token, so we always fetch.
+        // We still forward the token if present for any future auth needs.
+        try {
+          const requestConfig = incomingToken
+            ? { headers: { Authorization: `Bearer ${incomingToken}` } }
+            : {};
 
-            if (userServiceResponse.data && userServiceResponse.data.success) {
-              const resBody = userServiceResponse.data;
-              // Handles nested user details object safely
-              if (resBody.data?.user) {
-                userAccountDetails = resBody.data.user;
-              } else if (resBody.data) {
-                userAccountDetails = resBody.data;
-              }
+          const userServiceResponse = await axios.get(
+            `${USER_SERVICE_URL}/api/users/public-doctor-account/${doctor._id}`,
+            requestConfig
+          );
+
+          if (userServiceResponse.data && userServiceResponse.data.success) {
+            const resBody = userServiceResponse.data;
+            // Handles nested user details object safely
+            if (resBody.data?.user) {
+              userAccountDetails = resBody.data.user;
+            } else if (resBody.data) {
+              userAccountDetails = resBody.data;
             }
-          } catch (profileError) {
-            console.error(
-              `⚠️ Profile fetch failed for doctor ${doctor._id}: ${profileError.message}`
-            );
           }
+        } catch (profileError) {
+          console.error(
+            `⚠️ Profile fetch failed for doctor ${doctor._id}: ${profileError.message}`
+          );
         }
 
         return {
