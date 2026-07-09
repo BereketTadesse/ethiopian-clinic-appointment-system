@@ -74,10 +74,9 @@ const doctorSchema = new mongoose.Schema(
  * the deactivation intent here and carry it as a temporary instance
  * flag (_wasDeactivated) for the post-save hook to consume.
  */
-doctorSchema.pre('save', function (next) {
+doctorSchema.pre('save', function () {
   // Flag is true only when isActive is being explicitly changed TO false
   this._wasDeactivated = this.isModified('isActive') && this.isActive === false;
-  next();
 });
 
 /**
