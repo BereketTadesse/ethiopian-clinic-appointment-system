@@ -3,7 +3,7 @@ import { getClinicProfile, getClinicStatus, updateClinicProfile } from '../contr
 import { getAllDoctors, getDoctorById, createDoctorProfile, doctorSelfUpdate, updateDoctorProfile, deleteDoctorProfile } from '../controllers/doctor.controller.js';
 import { protect } from '../middleware/auth.js';
 import { authorizeAdmin, authorizeDoctor } from '../middleware/auth.js';
-import { getDoctorAvailableSlots } from '../controllers/slot.controller.js'
+import { getDoctorAvailableSlots,bookslots,releaseSlot,blockSlots,cancelBlockedSlot} from '../controllers/slot.controller.js'
 const router = express.Router();
 
 
@@ -23,4 +23,10 @@ router.delete('/admin/disableDoctorProfile/:id', protect, authorizeAdmin, delete
 // Public route for patients browsing available doctor slots
 router.get('/:id/slots', getDoctorAvailableSlots);
 
+// route for booking slots
+
+router.post('/bookslots', protect, bookslots);
+router.post('/releaseSlot', protect, releaseSlot);
+router.post('/blockSlots', protect, authorizeAdmin, blockSlots);
+router.post('/cancelBlockedSlot', protect, authorizeAdmin, cancelBlockedSlot);
 export default router;

@@ -64,3 +64,89 @@ export const updateSlotStatus = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to modify slot status.', error: error.message });
   }
 };
+
+export const blockSlots = async (req, res) => {
+  try {
+    const { doctorId, date, startTime, endTime } = req.body;
+    const slot = new Slot({
+      doctorId,
+      date,
+      startTime,
+      endTime,
+      status: 'blocked'
+    });   
+    await slot.save();
+    return res.status(200).json({
+      success: true,
+      message: 'Slot blocked successfully',
+      data: slot
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to block slot.', error: error.message });
+  }
+};
+
+export const cancelBlockedSlot = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const slot = await Slot.findById(id);
+    if (!slot) {
+      return res.status(404).json({ success: false, message: 'Time slot record not found.' });
+    }
+    slot.status = 'available';
+    await slot.save();
+    return res.status(200).json({
+      success: true,
+      message: 'Slot cancelled successfully',
+      data: slot
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to cancel slot.', error: error.message });
+  }
+};
+
+export const bookslots = async(req,res)=>{
+  try{
+    const {slotId,appointmentId} = req.body;
+    const slot = await Slot.findById(slotId);
+    if (!slot) {
+      return res.status(404).json({ success: false, message: 'Time slot record not found.' });
+    }
+    if (slot.status !== 'available'){
+      return res.status(400).json({ success: false, message: 'Slot is not available.' });
+    }
+    slot.status = 'booked';
+    slot.appointmentId = appointmentId;
+    await slot.save();
+    return res.status(200).json({
+      success: true,
+      message: 'Slot booked successfully',
+      data: slot
+    });
+  }catch(error){
+    return res.status(500).json({success:false,message:'Failed to book slot.',error:error.message});
+  }
+}
+
+export const releaseSlot = async(req,res) =>{
+  try{
+    const {id} = req.params;
+    const slot = await Slot.findById(id);
+    if (!slot) {
+      return res.status(404).json({ success: false, message: 'Time slot record not found.' });
+    }
+    if(slot.status !== 'booked'){
+      return res.status(400).json({ success: false, message: 'Slot is not booked.' });
+    }
+    slot.status = 'available';
+    slot.appointmentId = null;
+    await slot.save();
+    return res.status(200).json({
+      success: true,
+      message: 'Slot released successfully',
+      data: slot
+    });
+  }catch(error){
+    return res.status(500).json({success:false,message:'Failed to release slot.',error:error.message});
+  }
+}
