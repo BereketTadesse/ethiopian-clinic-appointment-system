@@ -1,7 +1,9 @@
 import User from '../models/user-service.model.js';
-import DoctorProfile from '../models/DoctorProfile.js';
+import axios from 'axios';
 import PatientProfile from '../models/PatientProfile.js';
 import bcrypt from 'bcryptjs';
+
+const CLINIC_SERVICE_URL = process.env.CLINIC_SERVICE_URL || 'http://localhost:3002';
 import sendVerificationEmail from '../utils/send-email.js';
 import { getCookieOptions } from '../utils/cookieConfig.js';
 import redisClient from '../config/redis.js';
@@ -307,135 +309,160 @@ const resetPassword = async (req, res) => {
 
       if(req.file) {
         // Convert the memory buffer of the image into a format Cloudinary understands
-      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+        const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
       
-      const uploadResponse = await cloudinary.uploader.upload(base64File, {
-        folder: 'ethio_clinic_avatars', // Saves avatars to a dedicated folder
-        resource_type: 'image'
-      });
+        const uploadResponse = await cloudinary.uploader.upload(base64File, {
+          folder: 'ethio_clinic_avatars', // Saves avatars to a dedicated folder
+          resource_type: 'image'
+        });
       
-      profilePictureURL = uploadResponse.secure_url;
-
-      // 🎯 UPDATE COMMON TABLE: Save the image url directly onto the master User document
-      await User.findByIdAndUpdate(userId, { profilePicture: profilePictureURL });
+        profilePictureURL = uploadResponse.secure_url;
       }
-    const extraDetails = { ...req.body };
+
+      const extraDetails = { ...req.body };
+      
+      // Update core User details if provided in onboarding
+      const coreUpdates = {};
+      if (profilePictureURL) coreUpdates.profilePicture = profilePictureURL;
+      if (extraDetails.address) coreUpdates.address = extraDetails.address;
+      if (extraDetails.gender) coreUpdates.gender = extraDetails.gender;
+      if (extraDetails.birthDate) coreUpdates.birthDate = extraDetails.birthDate;
+
+      if (Object.keys(coreUpdates).length > 0) {
+        await User.findByIdAndUpdate(userId, { $set: coreUpdates }, { new: true });
+      }
     
-    let detailedProfile;
+      let detailedProfile;
 
-    if (userRole === 'patient') {
-      // fields expected here from user input: address, birthDate, gender, emergencyContact
-      detailedProfile = await PatientProfile.findOneAndUpdate(
-        { user: userId },
-        { $set: extraDetails },
-        { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
-      ).populate('user', 'name email phoneNumber role profilePicture');
+      if (userRole === 'patient') {
+        // fields expected here from user input: address, birthDate, gender, emergencyContact
+        detailedProfile = await PatientProfile.findOneAndUpdate(
+          { user: userId },
+          { $set: extraDetails },
+          { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
+        ).populate('user', 'name email phoneNumber role profilePicture');
 
-    } else if (userRole === 'doctor') {
-      // fields expected here from user input: specialization, licenseNumber, consultationFee, address
-      detailedProfile = await DoctorProfile.findOneAndUpdate(
-        { user: userId },
-        { $set: extraDetails },
-        { new: true, upsert: true }
-      ).populate('user', 'name email phoneNumber role profilePicture');
-      
-    } else {
-      return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
-    }
+      } else if (userRole === 'doctor') {
+        // For doctors, core onboarding details are saved on User model.
+        // Clinical details are managed directly in clinic-service.
+        detailedProfile = await User.findById(userId).select('-password');
+      } else {
+        return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
+      }
 
-    // 3. PHASE 3: Send back the unified payload response
-    return res.status(200).json({
-      success: true,
-      message: 'Onboarding profile data and picture saved successfully!',
-      data: detailedProfile
-    });
-
-  } catch (error) {
-    console.error(`❌ Unified Onboarding Error: ${error.message}`);
-    return res.status(500).json({ success: false, message: 'Internal Server Error' });
-  }
-};
-
-const updateProfile = async (req, res) => {
-  try {
-    const userId = req.user.id || req.user._id; 
-
-    // 1. Fetch the user from MongoDB Atlas to safely determine their role flag
-    const fullUser = await User.findById(userId);
-    if (!fullUser) {
-      return res.status(404).json({ success: false, message: 'User account not found.' });
-    }
-    const userRole = fullUser.role;
-
-    // =========================================================
-    // PHASE 1: SPLIT & UPDATE COMMON USER ROW (REGISTRATION DATA)
-    // =========================================================
-    const coreUpdateFields = {};
-
-    // Catch core registration strings if the user edited them
-    if (req.body.name) coreUpdateFields.name = req.body.name;
-    if (req.body.email) coreUpdateFields.email = req.body.email;
-    if (req.body.phoneNumber) coreUpdateFields.phoneNumber = req.body.phoneNumber;
-
-    // Handle profile picture binary file upload via Cloudinary stream pipeline
-    if (req.file) {
-      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-      const uploadResponse = await cloudinary.uploader.upload(base64File, {
-        folder: 'ethio_clinic_avatars',
-        resource_type: 'image'
+      // 3. PHASE 3: Send back the unified payload response
+      return res.status(200).json({
+        success: true,
+        message: 'Onboarding profile data and picture saved successfully!',
+        data: detailedProfile
       });
-      coreUpdateFields.profilePicture = uploadResponse.secure_url;
+
+    } catch (error) {
+      console.error(`❌ Unified Onboarding Error: ${error.message}`);
+      return res.status(500).json({ success: false, message: 'Internal Server Error' });
     }
+  };
 
-    // Save changes to the core identity registry table if any changes were requested
-    if (Object.keys(coreUpdateFields).length > 0) {
-      await User.findByIdAndUpdate(userId, { $set: coreUpdateFields }, { new: true });
+  const updateProfile = async (req, res) => {
+    try {
+      const userId = req.user.id || req.user._id; 
+
+      // 1. Fetch the user from MongoDB Atlas to safely determine their role flag
+      const fullUser = await User.findById(userId);
+      if (!fullUser) {
+        return res.status(404).json({ success: false, message: 'User account not found.' });
+      }
+      const userRole = fullUser.role;
+
+      // =========================================================
+      // PHASE 1: SPLIT & UPDATE COMMON USER ROW (REGISTRATION DATA)
+      // =========================================================
+      const coreUpdateFields = {};
+
+      // Catch core registration strings if the user edited them
+      if (req.body.name) coreUpdateFields.name = req.body.name;
+      if (req.body.email) coreUpdateFields.email = req.body.email;
+      if (req.body.phoneNumber) coreUpdateFields.phoneNumber = req.body.phoneNumber;
+      if (req.body.address) coreUpdateFields.address = req.body.address;
+      if (req.body.gender) coreUpdateFields.gender = req.body.gender;
+
+      // Handle profile picture binary file upload via Cloudinary stream pipeline
+      if (req.file) {
+        const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+        const uploadResponse = await cloudinary.uploader.upload(base64File, {
+          folder: 'ethio_clinic_avatars',
+          resource_type: 'image'
+        });
+        coreUpdateFields.profilePicture = uploadResponse.secure_url;
+      }
+
+      // Save changes to the core identity registry table if any changes were requested
+      if (Object.keys(coreUpdateFields).length > 0) {
+        await User.findByIdAndUpdate(userId, { $set: coreUpdateFields }, { new: true });
+      }
+
+      // =========================================================
+      // PHASE 2: SPLIT & UPDATE CUSTOM PROFILE ROW (CLINICAL DATA)
+      // =========================================================
+      // Clone body payload, but strip out registration items so they don't corrupt profile tables
+      const extraProfileDetails = { ...req.body };
+      delete extraProfileDetails.name;
+      delete extraProfileDetails.email;
+      delete extraProfileDetails.phoneNumber;
+      delete extraProfileDetails.address;
+      delete extraProfileDetails.gender;
+
+      let detailedProfile;
+
+      // Route remaining specialized data fields into correct collection rows based on role
+      if (userRole === 'patient') {
+        detailedProfile = await PatientProfile.findOneAndUpdate(
+          { user: userId },
+          { $set: extraProfileDetails },
+          { new: true, upsert: true } // upsert: true builds the row if it doesn't exist yet!
+        ).populate('user', 'name email phoneNumber role profilePicture');
+
+      } else if (userRole === 'doctor') {
+        // Forward clinical details to Clinic Service if the doctor updated any clinical attributes
+        const incomingToken = req.headers.authorization?.startsWith('Bearer ')
+          ? req.headers.authorization.split(' ')[1]
+          : (req.cookies?.token || null);
+
+        if (incomingToken && Object.keys(extraProfileDetails).length > 0) {
+          try {
+            await axios.patch(
+              `${CLINIC_SERVICE_URL}/api/clinics/me`,
+              extraProfileDetails,
+              {
+                headers: {
+                  Authorization: `Bearer ${incomingToken}`
+                }
+              }
+            );
+          } catch (clinicErr) {
+            console.error(`⚠️ Failed to forward doctor clinical updates to clinic-service: ${clinicErr.message}`);
+          }
+        }
+        
+        detailedProfile = await User.findById(userId).select('-password');
+      } else {
+        return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
+      }
+
+      // =========================================================
+      // PHASE 3: UNIFIED CLIENT PAYLOAD DELIVERY
+      // =========================================================
+      return res.status(200).json({
+        success: true,
+        message: 'Core registration parameters and clinical profile attributes updated concurrently!',
+        data: detailedProfile
+      });
+
+    } catch (error) {
+      console.error(`❌ Complete Synchronized Update Error: ${error.message}`);
+      return res.status(500).json({ success: false, message: 'Internal Server Error' });
     }
-
-    // =========================================================
-    // PHASE 2: SPLIT & UPDATE CUSTOM PROFILE ROW (CLINICAL DATA)
-    // =========================================================
-    // Clone body payload, but strip out registration items so they don't corrupt profile tables
-    const extraProfileDetails = { ...req.body };
-    delete extraProfileDetails.name;
-    delete extraProfileDetails.email;
-    delete extraProfileDetails.phoneNumber;
-
-    let detailedProfile;
-
-    // Route remaining specialized data fields into correct collection rows based on role
-    if (userRole === 'patient') {
-      detailedProfile = await PatientProfile.findOneAndUpdate(
-        { user: userId },
-        { $set: extraProfileDetails },
-        { new: true, upsert: true } // upsert: true builds the row if it doesn't exist yet!
-      ).populate('user', 'name email phoneNumber role profilePicture');
-
-    } else if (userRole === 'doctor') {
-      detailedProfile = await DoctorProfile.findOneAndUpdate(
-        { user: userId },
-        { $set: extraProfileDetails },
-        { new: true, upsert: true }
-      ).populate('user', 'name email phoneNumber role profilePicture');
-      
-    } else {
-      return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
-    }
-
-    // =========================================================
-    // PHASE 3: UNIFIED CLIENT PAYLOAD DELIVERY
-    // =========================================================
-    return res.status(200).json({
-      success: true,
-      message: 'Core registration parameters and clinical profile attributes updated concurrently!',
-      data: detailedProfile
-    });
-
-  } catch (error) {
-    console.error(`❌ Complete Synchronized Update Error: ${error.message}`);
-    return res.status(500).json({ success: false, message: 'Internal Server Error' });
-  }
-};
+  };
 
 const getProfileById = async (req, res) => {
   try {
@@ -472,18 +499,32 @@ const getProfileById = async (req, res) => {
       }
 
     } else if (userRole === 'doctor') {
-      combinedProfileData = await DoctorProfile.findOne({ user: targetUserId })
-        .populate('user', 'name email phoneNumber role profilePicture createdAt');
-
-      if (!combinedProfileData) {
-        combinedProfileData = { 
-          user: coreUser, 
-          specialization: "", 
-          licenseNumber: "", 
-          consultationFee: 0, 
-          address: "" 
-        };
+      let clinicDetails = null;
+      try {
+        const clinicServiceResponse = await axios.get(
+          `${CLINIC_SERVICE_URL}/api/clinics/getAllDoctors/${targetUserId}`
+        );
+        if (clinicServiceResponse.data && clinicServiceResponse.data.success) {
+          clinicDetails = clinicServiceResponse.data.data;
+        }
+      } catch (err) {
+        console.error(`⚠️ Failed to fetch doctor clinical details: ${err.message}`);
       }
+
+      combinedProfileData = {
+        user: coreUser,
+        specialization: clinicDetails?.specialization || "",
+        licenseNumber: clinicDetails?.licenseNumber || "",
+        yearsOfExperience: clinicDetails?.yearsOfExperience || clinicDetails?.experience || 0,
+        bio: clinicDetails?.bio || "",
+        availableDays: clinicDetails?.availableDays || [],
+        startTime: clinicDetails?.startTime || "",
+        endTime: clinicDetails?.endTime || "",
+        breakStart: clinicDetails?.breakStart || null,
+        breakEnd: clinicDetails?.breakEnd || null,
+        isAcceptingPatients: clinicDetails?.isAcceptingPatients ?? true,
+        isActive: clinicDetails?.isActive ?? true
+      };
     } else {
       // Fallback for Admin accounts who only have the common User details
       return res.status(200).json({ success: true, data: { user: coreUser } });
@@ -683,10 +724,25 @@ const deleteMe = async(req, res)=>{
     };
     const userRole = user.role;
     if(userRole ==='patient'){
-await PatientProfile.findOneAndDelete({ user: userId });
+      await PatientProfile.findOneAndDelete({ user: userId });
     } 
     else if (userRole === 'doctor') {
-      await DoctorProfile.findOneAndDelete({ user: userId });
+      // Forge a short-lived admin token to authorize the cross-service call
+      const internalAdminToken = jwt.sign(
+        { id: userId, role: 'admin' },
+        process.env.JWT_SECRET,
+        { expiresIn: '1m' }
+      );
+
+      try {
+        await axios.delete(
+          `${CLINIC_SERVICE_URL}/api/clinics/admin/disableDoctorProfile/${userId}`,
+          { headers: { Authorization: `Bearer ${internalAdminToken}` } }
+        );
+        console.log(`✅ Doctor clinical profile deactivated in clinic-service for user ${userId}`);
+      } catch (err) {
+        console.error(`⚠️ Failed to deactivate doctor profile in clinic-service: ${err.message}`);
+      }
     }
     await User.findByIdAndDelete(userId);
     // 5. 🧼 SESSION CLEAN-UP: Clear the HTTP-only JWT authentication cookie
