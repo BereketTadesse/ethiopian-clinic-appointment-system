@@ -253,5 +253,81 @@ const doctorSelfUpdate = async (req, res) => {
   }
 };
 
+const updateDoctorProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { specialization, licenseNumber, yearsOfExperience, bio, availableDays, startTime, endTime, breakStart, breakEnd } = req.body;
+    let doctor = await Doctor.findById(id);
+    if (!doctor || !doctor.isActive) {
+      return res.status(404).json({ success: false, message: 'Doctor profile data not found.' });
+    }
+    if (specialization !== undefined) doctor.specialization = specialization;
+    if (licenseNumber !== undefined) doctor.licenseNumber = licenseNumber;
+    if (yearsOfExperience !== undefined) doctor.yearsOfExperience = yearsOfExperience;
+    if (bio !== undefined) doctor.bio = bio;
+    if (availableDays) doctor.availableDays = availableDays;
+    if (startTime) doctor.startTime = startTime;
+    if (endTime) doctor.endTime = endTime;
+    if (breakStart !== undefined) doctor.breakStart = breakStart;
+    if (breakEnd !== undefined) doctor.breakEnd = breakEnd;
+    const updatedDoctor = await doctor.save();
+    return res.status(200).json({
+      success: true,
+      message: 'The Doctor\'s clinical profile has been updated successfully.',
+      data: updatedDoctor
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Doctor profile update tracking failed', error: error.message });
+  }
+}
+const deleteDoctorProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doctor = await Doctor.findById(id);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile data not found.' });
+    }
 
-export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate };
+    if (!doctor.isActive) {
+      return res.status(400).json({ success: false, message: 'Doctor profile is already deactivated.' });
+    }
+
+    // ✅ SOFT-DELETE: Set isActive = false and save.
+    // This triggers the Mongoose pre/post-save cascade hook which automatically
+    // cancels all 'available' and 'reserved' slots for this doctor.
+    // We do NOT hard-delete because appointment records still reference this doctorId.
+    doctor.isActive = false;
+    doctor.isAcceptingPatients = false;
+    await doctor.save(); // 🪝 Hook fires here → slots cascade to 'cancelled'
+
+    // Notify the user-service to deactivate the linked User account
+    const incomingToken = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.split(' ')[1]
+      : (req.cookies?.token || null);
+
+    if (incomingToken) {
+      try {
+        await axios.patch(
+          `${USER_SERVICE_URL}/api/users/admin/update-user-status/${id}`,
+          { isActive: false },
+          { headers: { Authorization: `Bearer ${incomingToken}` } }
+        );
+        console.log(`✅ User account for doctor ${id} deactivated in user-service.`);
+      } catch (userServiceError) {
+        // Log but don't rollback — the clinic record is already soft-deleted.
+        console.error(
+          `⚠️ Doctor deactivated in clinic-service but failed to notify user-service for ${id}: ${userServiceError.message}`
+        );
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Doctor profile deactivated. All future slots have been cancelled and their user account has been disabled.'
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Doctor profile deactivation failed', error: error.message });
+  }
+}
+
+export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate, updateDoctorProfile, deleteDoctorProfile };

@@ -22,7 +22,7 @@ router.post('/upload-profile', protect, generalRateLimiter, upload.single('profi
 router.put('/update-profile', protect, generalRateLimiter, upload.single('profilePicture'), updateProfile);
 router.get('/profile/:id', protect, generalRateLimiter, getProfileById);
 router.post('/request-email-update', protect,authRateLimiter, requestEmailUpdate);
-router.get('/confirm-email-update/:token', confirmEmailUpdate);
+router.get('/confirm-email-update/:token',confirmEmailUpdate);
 router.delete('/delete-me', protect, generalRateLimiter, deleteMe);
 router.patch('/admin/update-user-status/:id', protect, authorizeAdmin, generalRateLimiter, adminUpdateUserStatus);
 router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, getUsers);
