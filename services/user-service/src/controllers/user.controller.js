@@ -859,5 +859,106 @@ const adminUpdateUserStatus = async(req,res) => {
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 }
+const createFamilyMember = async (req, res) => {
+  try {
+    const { fullName, dateOfBirth, gender, relationship, phoneNumber, nationalId } = req.body;
+
+    const member = new FamilyMember({
+      accountId: req.user._id,
+      fullName,
+      dateOfBirth,
+      gender,
+      relationship,
+      phoneNumber,
+      nationalId,
+      isSelf: false
+    });
+
+    await member.save();
+    res.status(201).json({ member });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateFamilyMember = async (req, res) => {
+  try {
+    const { memberId } = req.params;
+
+    // ✅ Only pick fields that were actually sent in the request
+    const allowedFields = ['fullName', 'dateOfBirth', 'gender', 'relationship', 'phoneNumber', 'nationalId'];
+    const updates = {};
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
+    const member = await FamilyMember.findOneAndUpdate(
+      { _id: memberId, accountId: req.user._id },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+
+    if (!member) {
+      return res.status(404).json({ message: 'Family member not found' });
+    }
+
+    res.status(200).json({ member });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /family-members
+const getAllFamilyMembers = async (req, res) => {
+  try {
+    const members = await FamilyMember.find({ accountId: req.user._id });
+
+    res.status(200).json({ count: members.length, members });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// GET /family-members/:memberId
+const getOneFamilyMember = async (req, res) => {
+  try {
+    const member = await FamilyMember.findOne({
+      _id: req.params.memberId,
+      accountId: req.user._id   // ensures it belongs to this user
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Family member not found' });
+    }
+
+    res.status(200).json({ member });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const deleteFamilyMember = async (req, res) => {
+  try {
+    const { memberId } = req.params;
+
+    const member = await FamilyMember.findOneAndUpdate({
+      _id: memberId,
+      accountId: req.user._id
+    }, { $set: { isActive: false } });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Family member not found' });
+    }
+
+    res.status(200).json({ message: 'Family member deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
 export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile,updateProfile,getProfileById,
-  getPublicDoctorAccountById,requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus};
+  getPublicDoctorAccountById,requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus,
+  createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember};

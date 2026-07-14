@@ -4,7 +4,7 @@ import Appointment from '../models/appointment.model.js';
 const getMyCard = async (req, res) => {
   try {
     const patientId = req.user.id; 
-    const incomingToken = req.cookies.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+    const incomingToken = req.headers.authorization?.split(' ')[1] || null;
 
     // Pass token along to authorize inter-service data fetching
     const card = await cardService.findCardByPatientId(patientId, incomingToken);
@@ -33,7 +33,7 @@ const getMyCard = async (req, res) => {
 const updateMyCard = async (req, res) => {
   try {
     const patientId = req.user.id;
-    const incomingToken = req.cookies.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+    const incomingToken = req.headers.authorization?.split(' ')[1] || null;
 
     const updatedCard = await cardService.updateCardBackground(patientId, req.body, incomingToken);
 
@@ -60,7 +60,7 @@ const updateMyCard = async (req, res) => {
 const getCardByNumber = async (req, res) => {
   try {
     const { cardNumber } = req.params;
-    const incomingToken = req.cookies.token || (req.headers.authorization ? req.headers.authorization.split(' ')[1] : null);
+    const incomingToken = req.headers.authorization?.split(' ')[1] || null;
 
     const card = await cardService.findCardByCardNumber(cardNumber, incomingToken);
 

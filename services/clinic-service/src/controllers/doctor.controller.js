@@ -3,7 +3,7 @@ import Doctor from '../models/doctor.model.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
-const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'https://clinic-user-service.onrender.com';
 
 const getAllDoctors = async (req, res) => {
   try {
@@ -280,54 +280,78 @@ const updateDoctorProfile = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Doctor profile update tracking failed', error: error.message });
   }
 }
-const deleteDoctorProfile = async (req, res) => {
+/**
+ * PATCH /admin/toggleDoctorStatus/:id
+ * Admin can ACTIVATE or DEACTIVATE a doctor.
+ * Syncs isActive status in BOTH the Clinic Service (Doctor table) AND User Service (User table).
+ */
+const toggleDoctorStatus = async (req, res) => {
   try {
     const { id } = req.params;
+    const { isActive } = req.body; // true = activate, false = deactivate
+
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isActive field is required and must be a boolean (true or false).'
+      });
+    }
+
     const doctor = await Doctor.findById(id);
     if (!doctor) {
-      return res.status(404).json({ success: false, message: 'Doctor profile data not found.' });
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
     }
 
-    if (!doctor.isActive) {
-      return res.status(400).json({ success: false, message: 'Doctor profile is already deactivated.' });
+    if (doctor.isActive === isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Doctor is already ${isActive ? 'active' : 'deactivated'}.`
+      });
     }
 
-    // ✅ SOFT-DELETE: Set isActive = false and save.
-    // This triggers the Mongoose pre/post-save cascade hook which automatically
-    // cancels all 'available' and 'reserved' slots for this doctor.
-    // We do NOT hard-delete because appointment records still reference this doctorId.
-    doctor.isActive = false;
-    doctor.isAcceptingPatients = false;
-    await doctor.save(); // 🪝 Hook fires here → slots cascade to 'cancelled'
+    // ── Step 1: Update Clinic Service Doctor profile ──────────────
+    doctor.isActive = isActive;
+    if (!isActive) {
+      // Deactivating: stop accepting patients too
+      doctor.isAcceptingPatients = false;
+      // 🪝 pre-save hook fires here → cancels all future slots
+    }
+    await doctor.save();
 
-    // Notify the user-service to deactivate the linked User account
+    // ── Step 2: Sync to User Service (User table) ─────────────────
     const incomingToken = req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.split(' ')[1]
-      : (req.cookies?.token || null);
+      : null;
 
     if (incomingToken) {
       try {
         await axios.patch(
           `${USER_SERVICE_URL}/api/users/admin/update-user-status/${id}`,
-          { isActive: false },
+          { isActive },
           { headers: { Authorization: `Bearer ${incomingToken}` } }
         );
-        console.log(`✅ User account for doctor ${id} deactivated in user-service.`);
+        console.log(`✅ User account for doctor ${id} set to isActive=${isActive} in user-service.`);
       } catch (userServiceError) {
-        // Log but don't rollback — the clinic record is already soft-deleted.
+        // Log but don't rollback — clinic record is already updated.
         console.error(
-          `⚠️ Doctor deactivated in clinic-service but failed to notify user-service for ${id}: ${userServiceError.message}`
+          `⚠️ Clinic-service updated but failed to sync with user-service for doctor ${id}: ${userServiceError.message}`
         );
       }
     }
 
+    const action = isActive ? 'activated' : 'deactivated';
     return res.status(200).json({
       success: true,
-      message: 'Doctor profile deactivated. All future slots have been cancelled and their user account has been disabled.'
+      message: `Doctor profile ${action} successfully. User account status also updated in User Service.`,
+      data: { doctorId: id, isActive }
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Doctor profile deactivation failed', error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Doctor status toggle failed.',
+      error: error.message
+    });
   }
-}
+};
 
-export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate, updateDoctorProfile, deleteDoctorProfile };
+export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate, updateDoctorProfile, toggleDoctorStatus };

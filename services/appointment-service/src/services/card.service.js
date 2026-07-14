@@ -1,8 +1,11 @@
 import PatientCard from '../models/patientCard.model.js';
+import axios from 'axios';
+
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'https://clinic-user-service.onrender.com';
 
 
-const generateCardNumber = async() =>{
-    const currentYear = new Date().getFullYear
+const generateCardNumber = async() => {
+    const currentYear = new Date().getFullYear()
 
     const yearRegex = new RegExp(`^CLN-${currentYear}-`);
 
@@ -21,7 +24,7 @@ const findCardByPatientId = async (patientId, incomingToken) => {
   // 2. Fetch the true master clinical details from User Service
   try {
     const userServiceResponse = await axios.get(
-      `http://localhost:3001/api/users/profile/${patientId}`,
+      `${USER_SERVICE_URL}/api/users/profile/${patientId}`,
       {
         headers: {
           Cookie: `token=${incomingToken}`,
@@ -56,7 +59,7 @@ const findCardByCardNumber = async (cardNumber, incomingToken) => {
 
   try {
     const userServiceResponse = await axios.get(
-      `http://localhost:3001/api/users/profile/${localCard.patientId}`,
+      `${USER_SERVICE_URL}/api/users/profile/${localCard.patientId}`,
       {
         headers: {
           Cookie: `token=${incomingToken}`,
@@ -97,7 +100,7 @@ const updateCardBackground = async (patientId, updateData, incomingToken) => {
 
     // Forward the update command directly over the microservice boundary
     const userServiceResponse = await axios.put(
-      `http://localhost:3001/api/users/profile/update-profile`, 
+      `${USER_SERVICE_URL}/api/users/profile/update-profile`, 
       profilePayload,
       {
         headers: {

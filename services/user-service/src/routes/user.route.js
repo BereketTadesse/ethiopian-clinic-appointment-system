@@ -27,5 +27,10 @@ router.delete('/delete-me', protect, generalRateLimiter, deleteMe);
 router.patch('/admin/update-user-status/:id', protect, authorizeAdmin, generalRateLimiter, adminUpdateUserStatus);
 router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, getUsers);
 
-
+// family meber routes
+router.post('/createFamilyMember', protect,authRateLimiter, createFamilyMember);
+router.patch('/updateFamilyMember/:id', protect,authRateLimiter, updateFamilyMember);
+router.delete('/deleteFamilyMember/:id', protect,authRateLimiter,authorizeAdmin, deleteFamilyMember);
+router.get('/getAllFamilyMembers', protect,authRateLimiter, getAllFamilyMembers);
+router.get('/getOneFamilyMember/:id', protect,authRateLimiter, getOneFamilyMember);
 export default router;
