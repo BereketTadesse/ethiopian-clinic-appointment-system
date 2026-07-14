@@ -1,7 +1,7 @@
 import express from 'express';
 import { createUser , verifyEmail,loginUser ,logoutUser,forgotPassword ,resetPassword
     ,changePassword,uploadProfile,updateProfile,getProfileById,requestEmailUpdate,
-    confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById
+    confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById,createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember
 } from '../controllers/user.controller.js';
 import { protect , authorizeAdmin } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';

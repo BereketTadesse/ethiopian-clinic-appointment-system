@@ -1,0 +1,29 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Dev / test artifacts
+tests
+*.test.js
+*.spec.js
+coverage
+
+# Git
+.git
+.gitignore
+
+# Docker itself
+Dockerfile
+.dockerignore
+
+# Environment files (inject via docker-compose or platform env vars instead)
+.env
+.env.*
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor config
+.vscode
+.idea
