@@ -10,6 +10,9 @@ import { initSlotCronScheduler, runDailySlotAllocation } from './cron/slotCron.j
 
 const app = express();
 
+app.use(express.json());         // ✅ Parse JSON bodies on ALL routes
+app.use(express.urlencoded({ extended: true })); // ✅ Also parse form data
+
 const PORT = process.env.PORT || process.env.CLINIC_PORT || 3002;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://your-clinic-frontend.vercel.app';
 
@@ -35,7 +38,7 @@ async function start() {
     console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
   }
 
-  app.use(express.json());
+
 
   // Import routes after Redis connect attempt
   // const { default: clinicRoutes } = await import('./routes/clinic.route.js');

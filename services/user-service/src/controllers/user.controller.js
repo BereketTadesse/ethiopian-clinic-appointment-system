@@ -824,7 +824,7 @@ const adminUpdateUserStatus = async(req,res) => {
     const {id} = req.params;
     const {role, isActive} = req.body;
 
-    const updateFields = []
+    const updateFields = {};
 
     if (role !== undefined) updateFields.role = role;
     if (isActive !== undefined) updateFields.isActive = isActive;

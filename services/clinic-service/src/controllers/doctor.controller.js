@@ -309,6 +309,17 @@ const toggleDoctorStatus = async (req, res) => {
       });
     }
 
+    const incomingToken = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.split(' ')[1]
+      : null;
+
+    if (!incomingToken) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authorization token is required to update the linked user account.'
+      });
+    }
+
     // ── Step 1: Update Clinic Service Doctor profile ──────────────
     doctor.isActive = isActive;
     if (!isActive) {
@@ -319,10 +330,6 @@ const toggleDoctorStatus = async (req, res) => {
     await doctor.save();
 
     // ── Step 2: Sync to User Service (User table) ─────────────────
-    const incomingToken = req.headers.authorization?.startsWith('Bearer ')
-      ? req.headers.authorization.split(' ')[1]
-      : null;
-
     if (incomingToken) {
       try {
         await axios.patch(
@@ -336,6 +343,12 @@ const toggleDoctorStatus = async (req, res) => {
         console.error(
           `⚠️ Clinic-service updated but failed to sync with user-service for doctor ${id}: ${userServiceError.message}`
         );
+
+        return res.status(userServiceError.response?.status || 502).json({
+          success: false,
+          message: 'Doctor profile was updated, but the linked user account could not be updated.',
+          error: userServiceError.response?.data?.message || userServiceError.message
+        });
       }
     }
 
