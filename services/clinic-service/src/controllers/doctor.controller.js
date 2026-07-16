@@ -389,11 +389,8 @@ const toggleDoctorStatus = async (req, res) => {
     // Apply the local change only after the linked user account has synchronized.
     if (clinicStatusChanged) {
       doctor.isActive = isActive;
-      if (!isActive) {
-        // Deactivating: stop accepting patients too
-        doctor.isAcceptingPatients = false;
-        // pre-save hook fires here and cancels all future slots
-      }
+      doctor.isAcceptingPatients = isActive;
+      // When deactivating, the pre-save hook cancels all future slots.
       await doctor.save();
     }
 
