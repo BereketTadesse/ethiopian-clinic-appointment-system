@@ -4,6 +4,59 @@ import mongoose from 'mongoose';
 import axios from 'axios';
 
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'https://clinic-user-service.onrender.com';
+const USER_SERVICE_TIMEOUT_MS = Number(process.env.USER_SERVICE_TIMEOUT_MS) || 5000;
+const USER_SERVICE_SYNC_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.USER_SERVICE_SYNC_ATTEMPTS) || 3
+);
+const USER_SERVICE_RETRY_BASE_DELAY_MS = Number(process.env.USER_SERVICE_RETRY_BASE_DELAY_MS) || 250;
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const isRetryableUserServiceError = (error) => {
+  const status = error.response?.status;
+
+  return (
+    !error.response ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
+};
+
+const syncDoctorUserStatus = async ({ doctorId, isActive, token }) => {
+  let lastError;
+
+  for (let attempt = 1; attempt <= USER_SERVICE_SYNC_ATTEMPTS; attempt += 1) {
+    try {
+      return await axios.patch(
+        `${USER_SERVICE_URL}/api/users/admin/update-user-status/${doctorId}`,
+        { isActive },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: USER_SERVICE_TIMEOUT_MS
+        }
+      );
+    } catch (error) {
+      lastError = error;
+      const shouldRetry =
+        attempt < USER_SERVICE_SYNC_ATTEMPTS && isRetryableUserServiceError(error);
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      const delay = USER_SERVICE_RETRY_BASE_DELAY_MS * (2 ** (attempt - 1));
+      console.warn(
+        `User-service status sync attempt ${attempt}/${USER_SERVICE_SYNC_ATTEMPTS} failed for doctor ${doctorId}; retrying in ${delay}ms.`
+      );
+      await wait(delay);
+    }
+  }
+
+  throw lastError;
+};
 
 const getAllDoctors = async (req, res) => {
   try {
@@ -302,12 +355,7 @@ const toggleDoctorStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
     }
 
-    if (doctor.isActive === isActive) {
-      return res.status(400).json({
-        success: false,
-        message: `Doctor is already ${isActive ? 'active' : 'deactivated'}.`
-      });
-    }
+    const clinicStatusChanged = doctor.isActive !== isActive;
 
     const incomingToken = req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.split(' ')[1]
@@ -320,43 +368,42 @@ const toggleDoctorStatus = async (req, res) => {
       });
     }
 
-    // ── Step 1: Update Clinic Service Doctor profile ──────────────
-    doctor.isActive = isActive;
-    if (!isActive) {
-      // Deactivating: stop accepting patients too
-      doctor.isAcceptingPatients = false;
-      // 🪝 pre-save hook fires here → cancels all future slots
-    }
-    await doctor.save();
-
-    // ── Step 2: Sync to User Service (User table) ─────────────────
+    // Sync the User Service first so a downstream failure leaves the clinic record unchanged.
     if (incomingToken) {
       try {
-        await axios.patch(
-          `${USER_SERVICE_URL}/api/users/admin/update-user-status/${id}`,
-          { isActive },
-          { headers: { Authorization: `Bearer ${incomingToken}` } }
-        );
+        await syncDoctorUserStatus({ doctorId: id, isActive, token: incomingToken });
         console.log(`✅ User account for doctor ${id} set to isActive=${isActive} in user-service.`);
       } catch (userServiceError) {
-        // Log but don't rollback — clinic record is already updated.
         console.error(
-          `⚠️ Clinic-service updated but failed to sync with user-service for doctor ${id}: ${userServiceError.message}`
+          `User-service status sync failed for doctor ${id} after ${USER_SERVICE_SYNC_ATTEMPTS} attempt(s): ${userServiceError.message}`
         );
 
         return res.status(userServiceError.response?.status || 502).json({
           success: false,
-          message: 'Doctor profile was updated, but the linked user account could not be updated.',
+          message: 'The linked user account could not be updated. The clinic profile was left unchanged.',
           error: userServiceError.response?.data?.message || userServiceError.message
         });
       }
     }
 
-    const action = isActive ? 'activated' : 'deactivated';
+    // Apply the local change only after the linked user account has synchronized.
+    if (clinicStatusChanged) {
+      doctor.isActive = isActive;
+      if (!isActive) {
+        // Deactivating: stop accepting patients too
+        doctor.isAcceptingPatients = false;
+        // pre-save hook fires here and cancels all future slots
+      }
+      await doctor.save();
+    }
+
+    const action = clinicStatusChanged
+      ? (isActive ? 'activated' : 'deactivated')
+      : 'synchronized';
     return res.status(200).json({
       success: true,
       message: `Doctor profile ${action} successfully. User account status also updated in User Service.`,
-      data: { doctorId: id, isActive }
+      data: { doctorId: id, isActive, clinicStatusChanged }
     });
   } catch (error) {
     return res.status(500).json({
