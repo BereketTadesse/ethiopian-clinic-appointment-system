@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # Shared Infrastructure: MongoDB & Redis
+  # -------------------------------------------------------------
+  mongo:
+    image: mongo:7.0
+    container_name: clinic-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - clinic-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: clinic-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - clinic-network
+
+  # -------------------------------------------------------------
+  # User Service (Port 3001)
+  # -------------------------------------------------------------
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - USER_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_user_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - JWT_EXPIRE=${JWT_EXPIRE:-7d}
+      - CLINIC_SERVICE_URL=http://clinic-service:3002
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-noreply@clinic.et}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:-}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-}
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - clinic-network
+
+  # -------------------------------------------------------------
+  # Clinic Service (Port 3002)
+  # -------------------------------------------------------------
+  clinic-service:
+    build:
+      context: ./services/clinic-service
+      dockerfile: Dockerfile
+    container_name: clinic-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - CLINIC_PORT=3002
+      - CLINIC_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_clinic_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - USER_SERVICE_URL=http://user-service:3001
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - clinic-network
+
+  # -------------------------------------------------------------
+  # Appointment Service (Port 3003)
+  # -------------------------------------------------------------
+  appointment-service:
+    build:
+      context: ./services/appointment-service
+      dockerfile: Dockerfile
+    container_name: appointment-service
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - APPOINTMENT_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_appointment_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - USER_SERVICE_URL=http://user-service:3001
+      - CLINIC_SERVICE_URL=http://clinic-service:3002
+    depends_on:
+      - mongo
+      - redis
+      - user-service
+      - clinic-service
+    networks:
+      - clinic-network
+
+networks:
+  clinic-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:
