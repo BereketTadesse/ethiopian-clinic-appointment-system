@@ -1,6 +1,8 @@
 import User from '../models/user-service.model.js';
 import axios from 'axios';
 import PatientProfile from '../models/PatientProfile.js';
+import FamilyMember from '../models/family_members.model.js';
+import FamilyMemberProfile from '../models/family_member_profile.model.js';
 import bcrypt from 'bcryptjs';
 
 const CLINIC_SERVICE_URL = process.env.CLINIC_SERVICE_URL || 'http://localhost:3002';
@@ -9,7 +11,8 @@ import { getCookieOptions } from '../utils/cookieConfig.js';
 import redisClient from '../config/redis.js';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import {v2 as cloudinary} from 'cloudinary';
+import mongoose from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -17,24 +20,31 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 const createUser = async (req, res) => {
-    try {
-        const {name,email,phoneNumber,address,password,role,gender} = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-        // Check if user already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ message: 'User with this email already exists' });
-        }
-        if (!name || !email || !phoneNumber || !address || !password|| !gender) {
-            return res.status(400).json({ message: 'All fields are required' });
-        }
-        // Hash the password before saving
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
+  try {
+    const { name, email, phoneNumber, address, password, role, gender } = req.body;
 
-        const verificationToken = crypto.randomBytes(32).toString('hex');
+    // Check if user already exists
+    const existingUser = await User.findOne({ email }).session(session);
+    if (existingUser) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: 'User with this email already exists' });
+    }
+    if (!name || !email || !phoneNumber || !address || !password || !gender) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+    // Hash the password before saving
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-        const verificationUrl = `http://localhost:3001/api/users/verify/${verificationToken}`;
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+
+    const verificationUrl = `http://localhost:3001/api/users/verify/${verificationToken}`;
 
     // 2. Build the HTML template string right here inside your controller!
     const subject = "Verify Your Clinic Account Address";
@@ -50,19 +60,38 @@ const createUser = async (req, res) => {
       </div>
     `;
 
-        const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role ,verificationToken,gender});
-        await user.save();
-        sendVerificationEmail(email, subject, htmlTemplate);
-        res.status(201).json({ message: 'User created successfully' });
-    } catch (error) {
-        // Catch-all for database errors or unexpected crashes
-        console.error(`❌ Error in registerUser controller: ${error.message}`);
-         
-        return res.status(500).json({ 
-         success: false, 
-         message: 'Server Error, please try again later' 
-            });    
+    const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role, verificationToken, gender });
+    await user.save({ session });
+
+    // Await the email send result
+    const emailResult = await sendVerificationEmail(email, subject, htmlTemplate);
+
+    // If the email failed (your util returns null on error), roll back the user creation
+    if (!emailResult) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send verification email. User creation was aborted.'
+      });
     }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json({ message: 'User created successfully' });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    // Catch-all for database errors or unexpected crashes
+    console.error(`❌ Error in registerUser controller: ${error.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Server Error, please try again later'
+    });
+  }
 }
 
 const verifyEmail = async (req, res) => {
@@ -102,90 +131,157 @@ const verifyEmail = async (req, res) => {
 }
 
 const loginUser = async (req, res) => {
-    try {
-        const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-        // Check if user exists
-        const user = await User.findOne({ email });
-        if(!user){
-            return res.status(400).json({ message: 'Invalid email or password' });
-        }
+    // Check if user exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
 
-        // Check if the password is correct
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(400).json({ message: 'Invalid email or password' });
-        }
+    // Check if the password is correct
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
 
-        const isverified = user.isVerified;
-        if (!isverified) {
-            return res.status(403).json({ message: 'Please verify your email before logging in' });
-        }
+    const isverified = user.isVerified;
+    if (!isverified) {
+      return res.status(403).json({ message: 'Please verify your email before logging in' });
+    }
 
-        // Generate a unique token ID so this JWT can be blacklisted or audited later
-        const tokenJti = crypto.randomUUID();
-        const token = jwt.sign(
-          { userId: user._id, jti: tokenJti, role: user.role }, 
-          process.env.JWT_SECRET, 
-          { expiresIn: process.env.JWT_EXPIRE }
-        );
-        const cookieOptions = getCookieOptions();
+    const tokenJti = crypto.randomUUID();
 
-        // If we get here, the user is authenticated
-        return res.status(200)
-          .cookie('token', token, cookieOptions)
-          .json({ message: 'Login successful', user, token, jti: tokenJti });
-    } catch (error) {
-        console.error(`❌ Error in loginUser: ${error.message}`);
-        return res.status(500).json({ success: false, message: 'Server Error' });
-    }}
+    // Generate Access Token (short-lived)
+    const accessToken = jwt.sign(
+      { userId: user._id, role: user.role, jti: tokenJti },
+      process.env.JWT_ACCESS_SECRET,
+      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN }
+    );
+
+    // Generate Refresh Token (long-lived)
+    const refreshToken = jwt.sign(
+      { userId: user._id, jti: tokenJti },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN }
+    );
+
+    // Save Refresh Token to the database
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    const cookieOptions = getCookieOptions();
+    // Modify cookieOptions for the refresh token (e.g. maxAge = 7 days)
+    const refreshCookieOptions = {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
+    };
+
+    // If we get here, the user is authenticated
+    // Send accessToken in JSON, refreshToken in HttpOnly cookie
+    return res.status(200)
+      .cookie('refreshToken', refreshToken, refreshCookieOptions)
+      .json({
+        message: 'Login successful',
+        user,
+        accessToken
+      });
+  } catch (error) {
+    console.error(`❌ Error in loginUser: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Server Error' });
+  }
+}
 
 const logoutUser = async (req, res) => {
   try {
-    // 1. Grab the raw token string out of the incoming cookies
-    const token = req.cookies.token;
+    const refreshToken = req.cookies.refreshToken;
+    let accessToken = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      accessToken = authHeader.split(' ')[1];
+    }
 
-    if (token) {
+    // 1. Blacklist Access Token
+    if (accessToken) {
       try {
-        // 2. Decode the token to inspect the expiration data and jti identity claim
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        
-        if (decoded.jti) {
-          const nowInSeconds = Math.floor(Date.now() / 1000);
-          // Calculate remaining seconds until the token expires naturally
-          const remainingSeconds = decoded.exp - nowInSeconds;
-
-          // 3. 🎯 LOCK IN REDIS: If the token is still alive, blacklist it!
+        const decodedAccess = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
+        if (decodedAccess.jti) {
+          const remainingSeconds = decodedAccess.exp - Math.floor(Date.now() / 1000);
           if (remainingSeconds > 0) {
-            await redisClient.set(
-              `blacklist:${decoded.jti}`, 
-              '1', 
-              { EX: remainingSeconds } // EX means expire automatically in X seconds!
-            );
+            await redisClient.set(`blacklist:${decodedAccess.jti}`, '1', { EX: remainingSeconds });
           }
         }
-      } catch (jwtError) {
-        // If the token is already structurally corrupted or expired, skip blacklisting it
-        console.log("Token decode skipped during logout execution");
+      } catch (err) {
+        console.log("Access token decode skipped during logout");
       }
     }
 
-    // 4. Wipe out the cookie session from the client's web browser storage
-    res.cookie('token', 'none', {
+    // 2. Blacklist Refresh Token & Remove from DB
+    if (refreshToken) {
+      try {
+        const decodedRefresh = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+
+        await User.findByIdAndUpdate(decodedRefresh.userId, { refreshToken: null });
+
+        if (decodedRefresh.jti) {
+          const remainingSeconds = decodedRefresh.exp - Math.floor(Date.now() / 1000);
+          if (remainingSeconds > 0) {
+            await redisClient.set(`blacklist:${decodedRefresh.jti}`, '1', { EX: remainingSeconds });
+          }
+        }
+      } catch (jwtError) {
+        console.log("Refresh token decode skipped during logout execution");
+      }
+    }
+
+    res.cookie('refreshToken', 'none', {
       expires: new Date(Date.now() + 5 * 1000),
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict'
     });
 
-    return res.status(200).json({ 
-      success: true, 
-      message: 'Logged out cleanly. Session token blacklisted safely.' 
+    return res.status(200).json({
+      success: true,
+      message: 'Logged out cleanly. Tokens revoked securely.'
     });
-
   } catch (error) {
-    console.error(`❌ Cache Blacklisting Error: ${error.message}`);
+    console.error(`❌ Logout Error: ${error.message}`);
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+}
+
+const refreshAccessToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'Refresh token not found' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (err) {
+      return res.status(403).json({ message: 'Invalid or expired refresh token' });
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(403).json({ message: 'Invalid refresh token' });
+    }
+
+    const tokenJti = crypto.randomUUID();
+    const accessToken = jwt.sign(
+      { userId: user._id, role: user.role, jti: tokenJti },
+      process.env.JWT_ACCESS_SECRET,
+      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN }
+    );
+
+    res.status(200).json({ accessToken });
+  } catch (error) {
+    console.error(`❌ Error in refreshAccessToken: ${error.message}`);
+    res.status(500).json({ message: 'Server error during token refresh' });
   }
 };
 
@@ -239,8 +335,8 @@ const resetPassword = async (req, res) => {
     const { token } = req.params;
     const { password } = req.body;
 
-    if(!password) {
-      return res.status(400).json({message: 'Password is required'});
+    if (!password) {
+      return res.status(400).json({ message: 'Password is required' });
     }
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
@@ -249,8 +345,8 @@ const resetPassword = async (req, res) => {
       resetPasswordExpires: { $gt: Date.now() }
     });
 
-    if(!user){
-      return res.status(400).json({message: 'Invalid or expired password reset token'});
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired password reset token' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -268,201 +364,245 @@ const resetPassword = async (req, res) => {
     console.error(`❌ Reset Password Error: ${error.message}`);
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
-  }
+}
 
-  const changePassword = async (req, res) => {
-    try {
+const changePassword = async (req, res) => {
+  try {
 
-      const {currentPassword, newPassword} = req.body;
+    const { currentPassword, newPassword } = req.body;
 
-      if(!currentPassword || !newPassword){
-        return res.status(400).json({message: 'Current and new password are required'});
-      }
-
-      const user = await User.findById(req.user.id).select('+password');
-      if(!user){
-        return res.status(404).json({message: 'User not found'});
-      }
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if(!isMatch){
-        return res.status(400).json({message: 'Current password is incorrect'});
-      }
-      const samePassword = await bcrypt.compare(newPassword, user.password);
-      if(samePassword){
-        return res.status(400).json({message: 'New password cannot be the same as the old one'});
-      }
-      const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(newPassword, salt);
-      await user.save();
-      return res.status(200).json({message: 'Password changed successfully'});
-    } catch (error) {
-      console.error(`❌ Change Password Controller Error: ${error.message}`);
-      return res.status(500).json({ success: false, message: 'Internal Server Error' });
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new password are required' });
     }
+
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+    const samePassword = await bcrypt.compare(newPassword, user.password);
+    if (samePassword) {
+      return res.status(400).json({ message: 'New password cannot be the same as the old one' });
+    }
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    await user.save();
+    return res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error(`❌ Change Password Controller Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
+}
 
-  const uploadProfile= async (req, res) => {
-    try {
-      const userId = req.user.id;
-      const userRole = req.user.role;
-      let profilePictureURL
+const uploadProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    let profilePictureURL
 
-      if(req.file) {
-        // Convert the memory buffer of the image into a format Cloudinary understands
-        const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-      
-        const uploadResponse = await cloudinary.uploader.upload(base64File, {
-          folder: 'ethio_clinic_avatars', // Saves avatars to a dedicated folder
-          resource_type: 'image'
-        });
-      
-        profilePictureURL = uploadResponse.secure_url;
-      }
+    if (req.file) {
+      // Convert the memory buffer of the image into a format Cloudinary understands
+      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
 
-      const extraDetails = { ...req.body };
-      
-      // Update core User details if provided in onboarding
-      const coreUpdates = {};
-      if (profilePictureURL) coreUpdates.profilePicture = profilePictureURL;
-      if (extraDetails.address) coreUpdates.address = extraDetails.address;
-      if (extraDetails.gender) coreUpdates.gender = extraDetails.gender;
-      if (extraDetails.birthDate) coreUpdates.birthDate = extraDetails.birthDate;
-
-      if (Object.keys(coreUpdates).length > 0) {
-        await User.findByIdAndUpdate(userId, { $set: coreUpdates }, { new: true });
-      }
-    
-      let detailedProfile;
-
-      if (userRole === 'patient') {
-        // fields expected here from user input: address, birthDate, gender, emergencyContact
-        detailedProfile = await PatientProfile.findOneAndUpdate(
-          { user: userId },
-          { $set: extraDetails },
-          { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
-        ).populate('user', 'name email phoneNumber role profilePicture');
-
-      } else if (userRole === 'doctor') {
-        // For doctors, core onboarding details are saved on User model.
-        // Clinical details are managed directly in clinic-service.
-        detailedProfile = await User.findById(userId).select('-password');
-      } else {
-        return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
-      }
-
-      // 3. PHASE 3: Send back the unified payload response
-      return res.status(200).json({
-        success: true,
-        message: 'Onboarding profile data and picture saved successfully!',
-        data: detailedProfile
+      const uploadResponse = await cloudinary.uploader.upload(base64File, {
+        folder: 'ethio_clinic_avatars', // Saves avatars to a dedicated folder
+        resource_type: 'image'
       });
 
-    } catch (error) {
-      console.error(`❌ Unified Onboarding Error: ${error.message}`);
-      return res.status(500).json({ success: false, message: 'Internal Server Error' });
+      profilePictureURL = uploadResponse.secure_url;
     }
-  };
 
-  const updateProfile = async (req, res) => {
-    try {
-      const userId = req.user.id || req.user._id; 
+    const extraDetails = { ...req.body };
 
-      // 1. Fetch the user from MongoDB Atlas to safely determine their role flag
-      const fullUser = await User.findById(userId);
-      if (!fullUser) {
-        return res.status(404).json({ success: false, message: 'User account not found.' });
-      }
-      const userRole = fullUser.role;
+    // Update core User details if provided in onboarding
+    const coreUpdates = {};
+    if (profilePictureURL) coreUpdates.profilePicture = profilePictureURL;
+    if (extraDetails.address) coreUpdates.address = extraDetails.address;
+    if (extraDetails.gender) coreUpdates.gender = extraDetails.gender;
+    if (extraDetails.birthDate) coreUpdates.birthDate = extraDetails.birthDate;
 
-      // =========================================================
-      // PHASE 1: SPLIT & UPDATE COMMON USER ROW (REGISTRATION DATA)
-      // =========================================================
-      const coreUpdateFields = {};
+    if (Object.keys(coreUpdates).length > 0) {
+      await User.findByIdAndUpdate(userId, { $set: coreUpdates }, { new: true });
+    }
 
-      // Catch core registration strings if the user edited them
-      if (req.body.name) coreUpdateFields.name = req.body.name;
-      if (req.body.email) coreUpdateFields.email = req.body.email;
-      if (req.body.phoneNumber) coreUpdateFields.phoneNumber = req.body.phoneNumber;
-      if (req.body.address) coreUpdateFields.address = req.body.address;
-      if (req.body.gender) coreUpdateFields.gender = req.body.gender;
+    let detailedProfile;
 
-      // Handle profile picture binary file upload via Cloudinary stream pipeline
-      if (req.file) {
-        const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-        const uploadResponse = await cloudinary.uploader.upload(base64File, {
-          folder: 'ethio_clinic_avatars',
-          resource_type: 'image'
-        });
-        coreUpdateFields.profilePicture = uploadResponse.secure_url;
-      }
+    if (userRole === 'patient') {
+      // fields expected here from user input: address, birthDate, gender, emergencyContact
+      detailedProfile = await PatientProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraDetails },
+        { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
+      ).populate('user', 'name email phoneNumber role profilePicture');
 
-      // Save changes to the core identity registry table if any changes were requested
-      if (Object.keys(coreUpdateFields).length > 0) {
-        await User.findByIdAndUpdate(userId, { $set: coreUpdateFields }, { new: true });
-      }
+    } else if (userRole === 'doctor') {
+      // For doctors, core onboarding details are saved on User model.
+      // Clinical details are managed directly in clinic-service.
+      detailedProfile = await User.findById(userId).select('-password');
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
+    }
 
-      // =========================================================
-      // PHASE 2: SPLIT & UPDATE CUSTOM PROFILE ROW (CLINICAL DATA)
-      // =========================================================
-      // Clone body payload, but strip out registration items so they don't corrupt profile tables
-      const extraProfileDetails = { ...req.body };
-      delete extraProfileDetails.name;
-      delete extraProfileDetails.email;
-      delete extraProfileDetails.phoneNumber;
-      delete extraProfileDetails.address;
-      delete extraProfileDetails.gender;
+    // 3. PHASE 3: Send back the unified payload response
+    return res.status(200).json({
+      success: true,
+      message: 'Onboarding profile data and picture saved successfully!',
+      data: detailedProfile
+    });
 
-      let detailedProfile;
+  } catch (error) {
+    console.error(`❌ Unified Onboarding Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
 
-      // Route remaining specialized data fields into correct collection rows based on role
-      if (userRole === 'patient') {
-        detailedProfile = await PatientProfile.findOneAndUpdate(
-          { user: userId },
-          { $set: extraProfileDetails },
-          { new: true, upsert: true } // upsert: true builds the row if it doesn't exist yet!
-        ).populate('user', 'name email phoneNumber role profilePicture');
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
 
-      } else if (userRole === 'doctor') {
-        // Forward clinical details to Clinic Service if the doctor updated any clinical attributes
-        const incomingToken = req.headers.authorization?.startsWith('Bearer ')
-          ? req.headers.authorization.split(' ')[1]
-          : (req.cookies?.token || null);
+    // 1. Fetch the user from MongoDB Atlas to safely determine their role flag
+    const fullUser = await User.findById(userId);
+    if (!fullUser) {
+      return res.status(404).json({ success: false, message: 'User account not found.' });
+    }
+    const userRole = fullUser.role;
 
-        if (incomingToken && Object.keys(extraProfileDetails).length > 0) {
-          try {
-            await axios.patch(
-              `${CLINIC_SERVICE_URL}/api/clinics/me`,
-              extraProfileDetails,
-              {
-                headers: {
-                  Authorization: `Bearer ${incomingToken}`
-                }
+    // =========================================================
+    // PHASE 1: SPLIT & UPDATE COMMON USER ROW (REGISTRATION DATA)
+    // =========================================================
+    const coreUpdateFields = {};
+
+    // Catch core registration strings if the user edited them
+    if (req.body.name) coreUpdateFields.name = req.body.name;
+    if (req.body.email) coreUpdateFields.email = req.body.email;
+    if (req.body.phoneNumber) coreUpdateFields.phoneNumber = req.body.phoneNumber;
+    if (req.body.address) coreUpdateFields.address = req.body.address;
+    if (req.body.gender) coreUpdateFields.gender = req.body.gender;
+
+    // Handle profile picture binary file upload via Cloudinary stream pipeline
+    if (req.file) {
+      const base64File = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      const uploadResponse = await cloudinary.uploader.upload(base64File, {
+        folder: 'ethio_clinic_avatars',
+        resource_type: 'image'
+      });
+      coreUpdateFields.profilePicture = uploadResponse.secure_url;
+    }
+
+    // Save changes to the core identity registry table if any changes were requested
+    if (Object.keys(coreUpdateFields).length > 0) {
+      await User.findByIdAndUpdate(userId, { $set: coreUpdateFields }, { new: true });
+    }
+
+    // =========================================================
+    // PHASE 2: SPLIT & UPDATE CUSTOM PROFILE ROW (CLINICAL DATA)
+    // =========================================================
+    // Clone body payload, but strip out registration items so they don't corrupt profile tables
+    const extraProfileDetails = { ...req.body };
+    delete extraProfileDetails.name;
+    delete extraProfileDetails.email;
+    delete extraProfileDetails.phoneNumber;
+    delete extraProfileDetails.address;
+    delete extraProfileDetails.gender;
+
+    let detailedProfile;
+
+    // Route remaining specialized data fields into correct collection rows based on role
+    if (userRole === 'patient') {
+      detailedProfile = await PatientProfile.findOneAndUpdate(
+        { user: userId },
+        { $set: extraProfileDetails },
+        { new: true, upsert: true } // upsert: true builds the row if it doesn't exist yet!
+      ).populate('user', 'name email phoneNumber role profilePicture');
+
+    } else if (userRole === 'doctor') {
+      // Forward clinical details to Clinic Service if the doctor updated any clinical attributes
+      const incomingToken = req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.split(' ')[1]
+        : (req.cookies?.token || null);
+
+      if (incomingToken && Object.keys(extraProfileDetails).length > 0) {
+        try {
+          await axios.patch(
+            `${CLINIC_SERVICE_URL}/api/clinics/me`,
+            extraProfileDetails,
+            {
+              headers: {
+                Authorization: `Bearer ${incomingToken}`
               }
-            );
-          } catch (clinicErr) {
-            console.error(`⚠️ Failed to forward doctor clinical updates to clinic-service: ${clinicErr.message}`);
-          }
+            }
+          );
+        } catch (clinicErr) {
+          console.error(`⚠️ Failed to forward doctor clinical updates to clinic-service: ${clinicErr.message}`);
         }
-        
-        detailedProfile = await User.findById(userId).select('-password');
-      } else {
-        return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
       }
 
-      // =========================================================
-      // PHASE 3: UNIFIED CLIENT PAYLOAD DELIVERY
-      // =========================================================
-      return res.status(200).json({
-        success: true,
-        message: 'Core registration parameters and clinical profile attributes updated concurrently!',
-        data: detailedProfile
-      });
-
-    } catch (error) {
-      console.error(`❌ Complete Synchronized Update Error: ${error.message}`);
-      return res.status(500).json({ success: false, message: 'Internal Server Error' });
+      detailedProfile = await User.findById(userId).select('-password');
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
     }
-  };
+
+    // =========================================================
+    // PHASE 3: UNIFIED CLIENT PAYLOAD DELIVERY
+    // =========================================================
+    return res.status(200).json({
+      success: true,
+      message: 'Core registration parameters and clinical profile attributes updated concurrently!',
+      data: detailedProfile
+    });
+
+  } catch (error) {
+    console.error(`❌ Complete Synchronized Update Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+const createPatientProfile = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+
+    // 1. Fetch user to verify they are a patient
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User account not found.' });
+    }
+    
+    if (user.role !== 'patient') {
+      return res.status(403).json({ success: false, message: 'Only patients can create a patient profile.' });
+    }
+
+    // 2. Check if a profile already exists to prevent duplicates
+    const existingProfile = await PatientProfile.findOne({ user: userId });
+    if (existingProfile) {
+      return res.status(400).json({ success: false, message: 'Patient profile already exists. Use the update endpoint to modify it.' });
+    }
+
+    // 3. Create the new profile with the provided medical data
+    const newProfile = new PatientProfile({
+      user: userId,
+      ...req.body
+    });
+
+    await newProfile.save();
+
+    // 4. Populate and return the newly created profile
+    const populatedProfile = await PatientProfile.findById(newProfile._id)
+      .populate('user', 'name email phoneNumber role profilePicture birthDate');
+
+    return res.status(201).json({
+      success: true,
+      message: 'Patient profile created successfully!',
+      data: populatedProfile
+    });
+
+  } catch (error) {
+    console.error(`❌ Create Patient Profile Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
 
 const getProfileById = async (req, res) => {
   try {
@@ -471,11 +611,11 @@ const getProfileById = async (req, res) => {
     // 1. Find the core user row first to find out what their role is
     // 🔒 select('-password') guarantees the hashed password never leaks into the network response
     const coreUser = await User.findById(targetUserId).select('-password');
-    
+
     if (!coreUser) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No user account found matching that ID.' 
+      return res.status(404).json({
+        success: false,
+        message: 'No user account found matching that ID.'
       });
     }
 
@@ -489,12 +629,12 @@ const getProfileById = async (req, res) => {
 
       // Safe Fallback: If they haven't filled out profile forms yet, return an empty layout object wrapper
       if (!combinedProfileData) {
-        combinedProfileData = { 
-          user: coreUser, 
-          address: "", 
-          birthDate: null, 
-          gender: "", 
-          emergencyContact: {} 
+        combinedProfileData = {
+          user: coreUser,
+          address: "",
+          birthDate: null,
+          gender: "",
+          emergencyContact: {}
         };
       }
 
@@ -581,20 +721,20 @@ const getPublicDoctorAccountById = async (req, res) => {
   }
 };
 
-const requestEmailUpdate =  async(req,res) => {
+const requestEmailUpdate = async (req, res) => {
   try {
-    const {newEmail , currentpassword} = req.body;
+    const { newEmail, currentpassword } = req.body;
     const userId = req.user.id
 
-    if (!newEmail || !currentpassword)
-    {
-      return res.status(400).json({success: false, message: 'Please provide the new email and your current password.'});
+    if (!newEmail || !currentpassword) {
+      return res.status(400).json({ success: false, message: 'Please provide the new email and your current password.' });
     }
 
     const user = await User.findById(userId).select('+password')
 
-    if(!user) {
-      return res.status(400).json({ success: false , message: 'the user doesnt exist'
+    if (!user) {
+      return res.status(400).json({
+        success: false, message: 'the user doesnt exist'
       })
     }
 
@@ -609,8 +749,8 @@ const requestEmailUpdate =  async(req,res) => {
     }
     // 4. Generate a secure temporary token
     const rawUpdateToken = crypto.randomBytes(20).toString('hex');
-   
-    
+
+
     // 5. 🎯 FIX: Correctly define standalone variables for your MongoDB update query
     const hashedToken = crypto.createHash('sha256').update(rawUpdateToken).digest('hex');
     const tokenExpiry = Date.now() + 30 * 60 * 1000; // Expires in 30 minutes
@@ -681,7 +821,7 @@ const confirmEmailUpdate = async (req, res) => {
       return res.status(400).json({ success: false, message: 'This new email address has already been claimed by another account.' });
     }
 
-// 4. 🎯 FIX: Perform the swap and clear the temporary fields directly in Atlas
+    // 4. 🎯 FIX: Perform the swap and clear the temporary fields directly in Atlas
     // This completely bypasses the strict schema validation cascading rules!
     await User.findByIdAndUpdate(user._id, {
       $set: {
@@ -704,28 +844,28 @@ const confirmEmailUpdate = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 };
-const deleteMe = async(req, res)=>{
-  try{
-    const {password} = req.body
+const deleteMe = async (req, res) => {
+  try {
+    const { password } = req.body
     const userId = req.user.id
 
-    if(!password){
-        return res.status(400).json({message: 'Please provide your current password to confirm account deletion.'});
+    if (!password) {
+      return res.status(400).json({ message: 'Please provide your current password to confirm account deletion.' });
     }
     const user = await User.findById(userId).select('+password')
 
-    if(!user){
-      return res.status(400).json({message: 'User account not found.'})
+    if (!user) {
+      return res.status(400).json({ message: 'User account not found.' })
     }
     const isMatch = await bcrypt.compare(password, user.password);
 
-    if(!isMatch){
+    if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Incorrect password credentials. Deletion unauthorized.' });
     };
     const userRole = user.role;
-    if(userRole ==='patient'){
+    if (userRole === 'patient') {
       await PatientProfile.findOneAndDelete({ user: userId });
-    } 
+    }
     else if (userRole === 'doctor') {
       // Forge a short-lived admin token to authorize the cross-service call
       const internalAdminToken = jwt.sign(
@@ -754,8 +894,8 @@ const deleteMe = async(req, res)=>{
     });
 
     return res.status(200).json({ success: true, message: 'Your account and all associated data have been permanently deleted. We\'re sorry to see you go!' });
-    }
-    catch (error) {
+  }
+  catch (error) {
     console.error(`❌ Account Elimination Error: ${error.message}`);
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
@@ -819,10 +959,10 @@ const getUsers = async (req, res) => {
   }
 };
 
-const adminUpdateUserStatus = async(req,res) => {
-  try{
-    const {id} = req.params;
-    const {role, isActive} = req.body;
+const adminUpdateUserStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role, isActive } = req.body;
 
     const updateFields = {};
 
@@ -831,9 +971,9 @@ const adminUpdateUserStatus = async(req,res) => {
 
     // 2. If the admin sent an empty request body, reject early
     if (Object.keys(updateFields).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please provide at least one field to update (role, isActive, or isVerified).' 
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide at least one field to update (role, isActive, or isVerified).'
       });
     }
     // 3. Update the user record directly in MongoDB Atlas
@@ -853,8 +993,8 @@ const adminUpdateUserStatus = async(req,res) => {
       message: `User security settings updated successfully.`,
       data: updatedUser
     });
-    }
-  catch(error){
+  }
+  catch (error) {
     console.error(`❌ Admin Status Modification Error: ${error.message}`);
     return res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
@@ -883,7 +1023,7 @@ const createFamilyMember = async (req, res) => {
 
 const updateFamilyMember = async (req, res) => {
   try {
-    const { memberId } = req.params;
+    const memberId = req.params.id || req.params.memberId;
 
     // ✅ Only pick fields that were actually sent in the request
     const allowedFields = ['fullName', 'dateOfBirth', 'gender', 'relationship', 'phoneNumber', 'nationalId'];
@@ -921,11 +1061,12 @@ const getAllFamilyMembers = async (req, res) => {
   }
 };
 
-// GET /family-members/:memberId
+// GET /family-members/:id
 const getOneFamilyMember = async (req, res) => {
   try {
+    const memberId = req.params.id || req.params.memberId;
     const member = await FamilyMember.findOne({
-      _id: req.params.memberId,
+      _id: memberId,
       accountId: req.user._id   // ensures it belongs to this user
     });
 
@@ -941,12 +1082,12 @@ const getOneFamilyMember = async (req, res) => {
 
 const deleteFamilyMember = async (req, res) => {
   try {
-    const { memberId } = req.params;
+    const memberId = req.params.id || req.params.memberId;
 
     const member = await FamilyMember.findOneAndUpdate({
       _id: memberId,
       accountId: req.user._id
-    }, { $set: { isActive: false } });
+    }, { $set: { isActive: false } }, { new: true });
 
     if (!member) {
       return res.status(404).json({ message: 'Family member not found' });
@@ -958,7 +1099,145 @@ const deleteFamilyMember = async (req, res) => {
   }
 };
 
+const testTokens = (req, res) => {
+  try {
+    let accessToken = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      accessToken = authHeader.split(' ')[1];
+    }
+    const refreshToken = req.cookies.refreshToken;
 
-export { createUser, verifyEmail, loginUser, logoutUser, forgotPassword ,resetPassword,changePassword,uploadProfile,updateProfile,getProfileById,
-  getPublicDoctorAccountById,requestEmailUpdate,confirmEmailUpdate,deleteMe,getUsers,adminUpdateUserStatus,
-  createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember};
+    const decodedAccess = accessToken ? jwt.decode(accessToken) : null;
+    const decodedRefresh = refreshToken ? jwt.decode(refreshToken) : null;
+
+    res.status(200).json({
+      accessTokenPayload: decodedAccess,
+      refreshTokenPayload: decodedRefresh
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const checkRefreshTokenStatus = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'No refresh token provided. Make sure to log in or pass it in the body.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (err) {
+      return res.status(200).json({ status: 'revoked', reason: 'Token is invalid or structurally expired' });
+    }
+
+    // 1. Check Redis Blacklist
+    if (decoded.jti && redisClient) {
+      const isBlacklisted = await redisClient.get(`blacklist:${decoded.jti}`);
+      if (isBlacklisted) {
+        return res.status(200).json({ status: 'revoked', reason: 'Token JTI was actively blacklisted in Redis' });
+      }
+    }
+
+    // 2. Check Database
+    const user = await User.findById(decoded.userId);
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(200).json({ status: 'revoked', reason: 'Token has been removed from the database (or user was deleted)' });
+    }
+
+    return res.status(200).json({ status: 'active', message: 'The refresh token is fully valid and active!' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ==========================================
+// FAMILY MEMBER PROFILE (MEDICAL INFO)
+// ==========================================
+const createFamilyMemberProfile = async (req, res) => {
+  try {
+    const familyMemberId = req.params.familyMemberId;
+
+    // 1. Verify family member exists and belongs to the user
+    const member = await FamilyMember.findOne({ _id: familyMemberId, accountId: req.user._id });
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Family member not found or access denied.' });
+    }
+
+    // 2. Check if profile already exists
+    const existingProfile = await FamilyMemberProfile.findOne({ familyMemberId });
+    if (existingProfile) {
+      return res.status(400).json({ success: false, message: 'Medical profile already exists for this family member.' });
+    }
+
+    // 3. Create the profile
+    const profile = new FamilyMemberProfile({
+      familyMemberId,
+      ...req.body
+    });
+
+    await profile.save();
+    return res.status(201).json({ success: true, data: profile });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getFamilyMemberProfile = async (req, res) => {
+  try {
+    const familyMemberId = req.params.familyMemberId;
+
+    // 1. Verify family member exists and belongs to the user
+    const member = await FamilyMember.findOne({ _id: familyMemberId, accountId: req.user._id });
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Family member not found or access denied.' });
+    }
+
+    // 2. Fetch the profile
+    const profile = await FamilyMemberProfile.findOne({ familyMemberId });
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Medical profile not found.' });
+    }
+
+    return res.status(200).json({ success: true, data: profile });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateFamilyMemberProfile = async (req, res) => {
+  try {
+    const familyMemberId = req.params.familyMemberId;
+
+    // 1. Verify family member exists and belongs to the user
+    const member = await FamilyMember.findOne({ _id: familyMemberId, accountId: req.user._id });
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Family member not found or access denied.' });
+    }
+
+    // 2. Update the profile
+    const profile = await FamilyMemberProfile.findOneAndUpdate(
+      { familyMemberId },
+      { $set: req.body },
+      { new: true, runValidators: true }
+    );
+
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Medical profile not found.' });
+    }
+
+    return res.status(200).json({ success: true, data: profile });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export {
+  createUser, verifyEmail, loginUser, logoutUser, refreshAccessToken, testTokens, checkRefreshTokenStatus, forgotPassword, resetPassword, changePassword, uploadProfile, updateProfile, createPatientProfile, getProfileById,
+  getPublicDoctorAccountById, requestEmailUpdate, confirmEmailUpdate, deleteMe, getUsers, adminUpdateUserStatus,
+  createFamilyMember, updateFamilyMember, deleteFamilyMember, getAllFamilyMembers, getOneFamilyMember,
+  createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile
+};

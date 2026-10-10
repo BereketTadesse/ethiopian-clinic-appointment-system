@@ -5,6 +5,8 @@ import connectDB from './config/db.js';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import redisClient from './config/redis.js';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerDocument } from './config/swagger.js';
 
 const app = express();
 
@@ -32,6 +34,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// 3. 📖 Swagger API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  customSiteTitle: 'Ethiopian Clinic - User Service Docs'
+}));
+
 // 3. Asynchronous Database Initializer and Listener Launcher
 async function start() {
   try {
@@ -56,6 +63,7 @@ async function start() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Production microservice listening cleanly on address interface 0.0.0.0:${PORT}`);
+      console.log(`📖 Swagger API Docs interactive UI available at: http://localhost:${PORT}/api-docs`);
     });
 
   } catch (criticalBootError) {

@@ -8,19 +8,12 @@ import redisClient from '../config/redis.js';
 export const protect = async (req, res, next) => {
   let token;
 
-  // 1. Extract token from Authorization header (case-insensitive) or cookie
+  // 1. Extract token from Authorization header (case-insensitive)
   const authHeader = req.headers.authorization;
 
   if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
     token = authHeader.split(' ')[1];
-  } else if (req.cookies && req.cookies.token) {
-    token = req.cookies.token;
   }
-
-  // 🔍 DEBUG: Log what arrived (remove after fixing)
-  console.log('🔍 Auth header received:', authHeader);
-  console.log('🔍 Raw token extracted:', token);
-  console.log('🔑 JWT_SECRET prefix:', process.env.JWT_SECRET?.slice(0, 10) + '...');
 
   // 2. If no token is present, block entry immediately
   if (!token) {
@@ -31,8 +24,8 @@ export const protect = async (req, res, next) => {
   }
 
   try {
-    // 3. Verify the token signature
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // 3. Verify the token signature using Access Secret
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
     console.log('✅ Token decoded successfully:', decoded);
 
     // 4. Redis blacklist check

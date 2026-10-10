@@ -74,13 +74,7 @@ const patientCardSchema = new mongoose.Schema(
   }
 );
 
-// ── Indexes ───────────────────────────────────────────────────
-
-// Fast lookup by patientId
-patientCardSchema.index({ patientId: 1 });
-
-// Fast lookup by cardNumber
-patientCardSchema.index({ cardNumber: 1 });
+// Indexes for patientId and cardNumber are defined inline in the schema above.
 
 const PatientCard = mongoose.model('PatientCard', patientCardSchema);
 export default PatientCard;

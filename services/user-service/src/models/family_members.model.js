@@ -1,6 +1,4 @@
-// models/FamilyMember.model.js
-
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const familyMemberSchema = new mongoose.Schema(
   {
@@ -84,9 +82,6 @@ const familyMemberSchema = new mongoose.Schema(
 
 // ── Indexes ───────────────────────────────────────────────
 
-// Fast lookup: get all family members of one account
-familyMemberSchema.index({ accountId: 1 });
-
 // Ensure only ONE isSelf: true per account
 familyMemberSchema.index(
   { accountId: 1, isSelf: 1 },
@@ -96,4 +91,4 @@ familyMemberSchema.index(
 );
 
 const FamilyMember = mongoose.model('FamilyMember', familyMemberSchema);
-module.exports = FamilyMember;
+export default FamilyMember;
