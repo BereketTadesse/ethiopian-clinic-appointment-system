@@ -21,10 +21,10 @@ function createRedisStore(prefix) {
 const authRateLimiter = ratelimit({
   store: createRedisStore('rl:auth:'),
   windowMs: 15 * 60 * 1000, // 15 Minute dynamic sliding window
-  max: 10, // Strictly caps each unique IP address to 10 requests per window
+  max: 60, // Allows up to 60 sensitive auth attempts (prevents brute-force without blocking legitimate users)
   message: {
     success: false,
-    message: "Security Alert: Too many requests from this device. Please try again after 15 minutes."
+    message: "Security Alert: Too many authentication attempts from this device. Please try again after 15 minutes."
   },
   standardHeaders: true, // Returns rate limit info in the 'RateLimit-*' headers
   legacyHeaders: false, // Disables old 'X-RateLimit-*' headers
@@ -33,7 +33,7 @@ const authRateLimiter = ratelimit({
 const generalRateLimiter = ratelimit({
   store: createRedisStore('rl:general:'),
   windowMs: 15 * 60 * 1000, // 15 Minutes
-  max: 100, // Allows up to 100 requests (Perfect for normal frontend interactions)
+  max: 500, // Allows up to 500 requests (supports active clinical dashboard & profile interactions)
   message: {
     success: false,
     message: "High traffic volumes detected. Rate limit exceeded, please slow down."
