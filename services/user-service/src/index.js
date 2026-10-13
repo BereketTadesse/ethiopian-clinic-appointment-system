@@ -53,7 +53,10 @@ app.get('/health', (req, res) => {
 
 // 3. 📖 Swagger API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
-  customSiteTitle: 'Ethiopian Clinic - User Service Docs'
+  customSiteTitle: 'Ethiopian Clinic - User Service Docs',
+  swaggerOptions: {
+    persistAuthorization: true
+  }
 }));
 
 // 3. Asynchronous Database Initializer and Listener Launcher
