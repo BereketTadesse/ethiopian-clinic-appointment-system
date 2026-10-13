@@ -59,6 +59,8 @@ export const createNewAppointment = async (bookingData, patientId, incomingToken
     const freshAppointment = new Appointment({
       cardNumber: card.cardNumber,
       patientId,
+      patientName: bookingData.patientName || '',
+      forPerson: bookingData.forPerson || 'Self',
       doctorId,
       slotId,
       date,

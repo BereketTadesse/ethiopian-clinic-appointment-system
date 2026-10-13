@@ -47,17 +47,81 @@ const createUser = async (req, res) => {
     const verificationUrl = `http://localhost:3001/api/users/verify/${verificationToken}`;
 
     // 2. Build the HTML template string right here inside your controller!
-    const subject = "Verify Your Clinic Account Address";
+    const subject = "CareSync Ethiopia - Verify & Activate Your Account";
 
     const htmlTemplate = `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-        <h1 style="color: #2b6cb0;">Welcome to the Clinic System, ${name}!</h1>
-        <p style="color: #4a5568; font-size: 16px;">Thank you for signing up. Please click the button below to activate your user account:</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${verificationUrl}" style="background-color: #2b6cb0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Activate Account</a>
-        </div>
-        <p style="color: #718096; font-size: 12px;">If you didn't request this action, please safely disregard this email statement.</p>
-      </div>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; padding: 40px 15px;">
+          <tr>
+            <td align="center">
+              <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06); border: 1px solid #e2e8f0;">
+                
+                <!-- Brand Header -->
+                <tr>
+                  <td style="padding: 32px 40px 24px; background: linear-gradient(135deg, #4f46e5 0%, #10b981 100%); text-align: center;">
+                    <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; border-radius: 12px; background: rgba(255, 255, 255, 0.2); font-size: 22px; margin-bottom: 10px;">
+                      🏥
+                    </div>
+                    <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 800; letter-spacing: -0.5px;">
+                      CareSync <span style="color: #ffffff;">Ethiopia</span>
+                    </h1>
+                    <p style="margin: 4px 0 0; color: #e0e7ff; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600;">
+                      Official Clinic & Appointment System
+                    </p>
+                  </td>
+                </tr>
+
+                <!-- Main Body -->
+                <tr>
+                  <td style="padding: 36px 40px 28px;">
+                    <h2 style="margin: 0 0 14px; color: #0f172a; font-size: 20px; font-weight: 700;">
+                      Welcome, ${name}!
+                    </h2>
+                    <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
+                      Thank you for registering your healthcare account. To complete setup and activate your portal access, please verify your email address:
+                    </p>
+
+                    <!-- CTA Button -->
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin: 28px 0;">
+                      <tr>
+                        <td align="center">
+                          <a href="${verificationUrl}" target="_blank" style="display: inline-block; padding: 14px 34px; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);">
+                            Verify & Proceed to Login
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <p style="margin: 0; color: #64748b; font-size: 13px; line-height: 1.6;">
+                      Once verified, you will immediately be directed to your sign-in page to start booking clinic visits and managing family care.
+                    </p>
+                  </td>
+                </tr>
+
+                <!-- Footer -->
+                <tr>
+                  <td style="padding: 20px 40px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                    <p style="margin: 0 0 4px; color: #64748b; font-size: 12px; font-weight: 600;">
+                      CareSync Ethiopia Healthcare System
+                    </p>
+                    <p style="margin: 0; color: #94a3b8; font-size: 11px;">
+                      Addis Ababa, Ethiopia • Automated notification, please do not reply.
+                    </p>
+                  </td>
+                </tr>
+
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
     `;
 
     const user = new User({ name, email, phoneNumber, address, password: hashedPassword, role, verificationToken, gender });
@@ -114,15 +178,13 @@ const verifyEmail = async (req, res) => {
     user.verificationToken = undefined; // Clears the token out of the database so it can't be reused!
     await user.save();
 
-    // 4. Send back a clean visual confirmation response
-    // In a full application, you would use res.redirect('http://yourfrontend.com/verified') 
-    // to bring them back to your website landing page!
-    return res.status(200).send(`
-      <div style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-        <h1 style="color: #28a745;">✓ Account Successfully Verified!</h1>
-        <p>Thank you, ${user.name}. Your identity is confirmed. You can now log into the application.</p>
-      </div>
-    `);
+    // 4. Redirect directly to frontend Login page!
+    const baseClientUrl = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production'
+      ? 'https://your-clinic-frontend.vercel.app'
+      : 'http://localhost:3000');
+    const frontendLoginUrl = `${baseClientUrl.replace(/\/$/, '')}/login?verified=true`;
+
+    return res.redirect(frontendLoginUrl);
 
   } catch (error) {
     console.error(`❌ Error in verifyEmail: ${error.message}`);
@@ -287,34 +349,127 @@ const refreshAccessToken = async (req, res) => {
 
 async function forgotPassword(req, res) {
   try {
-    const { email } = req.body;
+    const email = req.body.email ? req.body.email.trim().toLowerCase() : '';
     if (!email) {
-      return res.status(400).json({ message: 'Email is required' });
+      return res.status(400).json({ success: false, message: 'Email is required' });
     }
+
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({
+        success: false,
+        message: 'No user found with this email address'
+      });
     }
     const resetToken = crypto.randomBytes(32).toString('hex');
     user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
     user.resetPasswordExpires = Date.now() + 3600000; // 1 hour from now
     await user.save();
-    const frontendUrl = process.env.NODE_ENV === 'production'
-      ? `https://your-clinic-frontend.vercel.app/reset-password/${resetToken}`
-      : `http://localhost:3000/reset-password/${resetToken}`;
+    const baseClientUrl = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production'
+      ? 'https://your-clinic-frontend.vercel.app'
+      : 'http://localhost:3000');
+    const frontendUrl = `${baseClientUrl.replace(/\/$/, '')}/reset-password/${resetToken}`;
 
     // 6. Build the email template right here in the controller
-    const subject = "Reset Your Account Password";
+    const subject = "CareSync Ethiopia - Reset Your Password";
+    const userName = user.name || 'Valued Patient';
     const htmlTemplate = `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-        <h2 style="color: #e53e3e;">Password Reset Request</h2>
-        <p style="color: #4a5568;">We received a request to change your account password. Click the button below to choose a new one:</p>
-        <p style="color: #e53e3e; font-weight: bold;">This reset link will completely expire in 10 minutes.</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${frontendUrl}" style="background-color: #e53e3e; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Reset Password</a>
-        </div>
-        <p style="color: #718096; font-size: 12px;">If you didn't request this, please ignore this email and your password will stay the same.</p>
-      </div>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; padding: 40px 15px;">
+          <tr>
+            <td align="center">
+              <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06); border: 1px solid #e2e8f0;">
+                
+                <!-- Brand Header -->
+                <tr>
+                  <td style="padding: 32px 40px 24px; background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%); text-align: center;">
+                    <div style="display: inline-block; width: 44px; height: 44px; line-height: 44px; border-radius: 12px; background: rgba(255, 255, 255, 0.2); font-size: 22px; margin-bottom: 10px;">
+                      🏥
+                    </div>
+                    <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 800; letter-spacing: -0.5px;">
+                      CareSync <span style="color: #6ee7b7;">Ethiopia</span>
+                    </h1>
+                    <p style="margin: 4px 0 0; color: #c7d2fe; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600;">
+                      Clinic & Healthcare Appointment Portal
+                    </p>
+                  </td>
+                </tr>
+
+                <!-- Main Body -->
+                <tr>
+                  <td style="padding: 36px 40px 28px;">
+                    <h2 style="margin: 0 0 14px; color: #0f172a; font-size: 20px; font-weight: 700;">
+                      Password Reset Request
+                    </h2>
+                    <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
+                      Hello <strong>${userName}</strong>,
+                    </p>
+                    <p style="margin: 0 0 24px; color: #475569; font-size: 15px; line-height: 1.6;">
+                      We received a request to reset the password for your CareSync Ethiopia account. Click the button below to choose a new password:
+                    </p>
+
+                    <!-- CTA Button -->
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin: 28px 0;">
+                      <tr>
+                        <td align="center">
+                          <a href="${frontendUrl}" target="_blank" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);">
+                            Reset My Password
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Security Alert Badge -->
+                    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 6px; margin: 24px 0 20px;">
+                      <p style="margin: 0; color: #92400e; font-size: 13px; line-height: 1.5;">
+                        ⏱️ <strong>Note:</strong> This secure link will expire in <strong>60 minutes</strong>.
+                      </p>
+                    </div>
+
+                    <p style="margin: 0; color: #64748b; font-size: 13px; line-height: 1.6;">
+                      If you did not request a password reset, you can safely ignore this email. Your current password remains protected and active.
+                    </p>
+                  </td>
+                </tr>
+
+                <!-- Direct Link Fallback -->
+                <tr>
+                  <td style="padding: 0 40px 24px;">
+                    <div style="border-top: 1px solid #f1f5f9; padding-top: 16px;">
+                      <p style="margin: 0 0 6px; color: #94a3b8; font-size: 11px;">
+                        Having trouble with the button? Copy and paste this URL into your browser:
+                      </p>
+                      <p style="margin: 0; font-size: 11px; word-break: break-all;">
+                        <a href="${frontendUrl}" style="color: #4f46e5; text-decoration: underline;">${frontendUrl}</a>
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+
+                <!-- Footer -->
+                <tr>
+                  <td style="padding: 20px 40px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                    <p style="margin: 0 0 4px; color: #64748b; font-size: 12px; font-weight: 600;">
+                      CareSync Ethiopia Healthcare System
+                    </p>
+                    <p style="margin: 0; color: #94a3b8; font-size: 11px;">
+                      Addis Ababa, Ethiopia • Automated notification, please do not reply.
+                    </p>
+                  </td>
+                </tr>
+
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
     `;
 
     // 7. Fire the email using your generic Brevo helper!
@@ -764,10 +919,11 @@ const requestEmailUpdate = async (req, res) => {
       }
     });
 
-    // 6. Build the confirmation link pointing to your Vercel frontend layout
-    const frontendUrl = process.env.NODE_ENV === 'production'
-      ? `https://your-clinic-frontend.vercel.app/verify-email-update/${rawUpdateToken}`
-      : `http://localhost:3000/verify-email-update/${rawUpdateToken}`;
+    // 6. Build the confirmation link pointing to your frontend layout
+    const baseClientUrl = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production'
+      ? 'https://your-clinic-frontend.vercel.app'
+      : 'http://localhost:3000');
+    const frontendUrl = `${baseClientUrl.replace(/\/$/, '')}/verify-email-update/${rawUpdateToken}`;
 
     // 7. Send the email notification via your Brevo helper
     const subject = "Confirm Your New Email Address";
@@ -1053,7 +1209,7 @@ const updateFamilyMember = async (req, res) => {
 // GET /family-members
 const getAllFamilyMembers = async (req, res) => {
   try {
-    const members = await FamilyMember.find({ accountId: req.user._id });
+    const members = await FamilyMember.find({ accountId: req.user._id, isActive: { $ne: false } });
 
     res.status(200).json({ count: members.length, members });
   } catch (error) {

@@ -5,11 +5,13 @@ dotenv.config();
 
 
 
-const connectDB = async () =>{
-try {
-    // 🍃 Updated to read the specific User Service variable name!
-    const conn = await mongoose.connect(process.env.USER_SERVICE_MONGO_URI);
-    
+const connectDB = async () => {
+  try {
+    const mongoUri = process.env.USER_SERVICE_MONGO_URI || process.env.MONGO_URI;
+    if (!mongoUri) {
+      throw new Error('Missing MongoDB URI: Please set USER_SERVICE_MONGO_URI or MONGO_URI in your Render environment variables.');
+    }
+    const conn = await mongoose.connect(mongoUri);
     console.log(`☁️ User Service connected to Cloud MongoDB Atlas: ${conn.connection.host}`);
   } catch (error) {
     console.error(`❌ User Service Database Connection Error: ${error.message}`);

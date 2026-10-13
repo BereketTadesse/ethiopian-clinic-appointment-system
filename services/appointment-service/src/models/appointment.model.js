@@ -15,6 +15,14 @@ const appointmentSchema = new mongoose.Schema(
       index: true
       // INTEGER NOT NULL / Links to User Service
     },
+    patientName: {
+      type: String,
+      default: ''
+    },
+    forPerson: {
+      type: String,
+      default: 'Self'
+    },
 
     // ── The doctor and slot (from Clinic Service) ────────────────
     doctorId: {

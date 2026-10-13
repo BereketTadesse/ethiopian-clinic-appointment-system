@@ -17,7 +17,7 @@ export const bookAppointment = async (req, res) => {
       });
     }
 
-    const patientId = req.user.id; // Appended securely from validation middlewares 
+    const patientId = req.body.patientId || req.user.id; // Either account holder or specified family member
     const incomingToken = req.headers.authorization?.split(' ')[1] || null;
 
     // Call our core business logic workflow orchestrator
