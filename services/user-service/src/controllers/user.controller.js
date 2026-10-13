@@ -19,6 +19,12 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
+
+const getJwtAccessSecret = () => process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'care-sync-ethiopia-fallback-access-secret-2026';
+const getJwtRefreshSecret = () => process.env.JWT_REFRESH_SECRET || process.env.REFRESH_TOKEN_SECRET || 'care-sync-ethiopia-fallback-refresh-secret-2026';
+const getJwtAccessExpiresIn = () => process.env.JWT_ACCESS_EXPIRES_IN || '15m';
+const getJwtRefreshExpiresIn = () => process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+
 const createUser = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -218,15 +224,15 @@ const loginUser = async (req, res) => {
     // Generate Access Token (short-lived)
     const accessToken = jwt.sign(
       { userId: user._id, role: user.role, jti: tokenJti },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN }
+      getJwtAccessSecret(),
+      { expiresIn: getJwtAccessExpiresIn() }
     );
 
     // Generate Refresh Token (long-lived)
     const refreshToken = jwt.sign(
       { userId: user._id, jti: tokenJti },
-      process.env.JWT_REFRESH_SECRET,
-      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN }
+      getJwtRefreshSecret(),
+      { expiresIn: getJwtRefreshExpiresIn() }
     );
 
     // Save Refresh Token to the database
@@ -267,7 +273,7 @@ const logoutUser = async (req, res) => {
     // 1. Blacklist Access Token
     if (accessToken) {
       try {
-        const decodedAccess = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
+        const decodedAccess = jwt.verify(accessToken, getJwtAccessSecret());
         if (decodedAccess.jti) {
           const remainingSeconds = decodedAccess.exp - Math.floor(Date.now() / 1000);
           if (remainingSeconds > 0) {
@@ -282,7 +288,7 @@ const logoutUser = async (req, res) => {
     // 2. Blacklist Refresh Token & Remove from DB
     if (refreshToken) {
       try {
-        const decodedRefresh = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+        const decodedRefresh = jwt.verify(refreshToken, getJwtRefreshSecret());
 
         await User.findByIdAndUpdate(decodedRefresh.userId, { refreshToken: null });
 
@@ -323,7 +329,7 @@ const refreshAccessToken = async (req, res) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+      decoded = jwt.verify(refreshToken, getJwtRefreshSecret());
     } catch (err) {
       return res.status(403).json({ message: 'Invalid or expired refresh token' });
     }
@@ -336,8 +342,8 @@ const refreshAccessToken = async (req, res) => {
     const tokenJti = crypto.randomUUID();
     const accessToken = jwt.sign(
       { userId: user._id, role: user.role, jti: tokenJti },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN }
+      getJwtAccessSecret(),
+      { expiresIn: getJwtAccessExpiresIn() }
     );
 
     res.status(200).json({ accessToken });
@@ -1285,7 +1291,7 @@ const checkRefreshTokenStatus = async (req, res) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+      decoded = jwt.verify(refreshToken, getJwtRefreshSecret());
     } catch (err) {
       return res.status(200).json({ status: 'revoked', reason: 'Token is invalid or structurally expired' });
     }

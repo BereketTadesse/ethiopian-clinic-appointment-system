@@ -25,7 +25,8 @@ export const protect = async (req, res, next) => {
 
   try {
     // 3. Verify the token signature using Access Secret
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'care-sync-ethiopia-fallback-access-secret-2026';
+    const decoded = jwt.verify(token, accessSecret);
     console.log('✅ Token decoded successfully:', decoded);
 
     // 4. Redis blacklist check
