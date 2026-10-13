@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const USER_SERVICE_BASE_URL = process.env.NEXT_PUBLIC_USER_API_URL || 'https://clinic-user-service.onrender.com/api';
+
 const API = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_USER_API_URL || 'http://localhost:3001/api',
+  baseURL: USER_SERVICE_BASE_URL,
   withCredentials: true,
 });
 
@@ -23,7 +25,7 @@ API.interceptors.response.use(
       originalRequest._retry = true;
       try {
         const { data } = await axios.post(
-          'http://localhost:3001/api/users/refresh-token',
+          `${USER_SERVICE_BASE_URL}/users/refresh-token`,
           {},
           { withCredentials: true }
         );
