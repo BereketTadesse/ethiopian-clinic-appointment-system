@@ -59,22 +59,6 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
 // 3. Asynchronous Database Initializer and Listener Launcher
 async function start() {
   try {
-    await connectDB();
-
-    if (redisClient) {
-      try {
-        if (!redisClient.isOpen) {
-          await redisClient.connect();
-          console.log('⚡ User Service connected to Render Redis store successfully!');
-        }
-      } catch (err) {
-        console.error('❌ Redis Connection Error:', err);
-        console.log('⚠️ Continuing boot cycle using fallback localized tracking arrays...');
-      }
-    } else {
-      console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
-    }
-
     const { default: userRoutes } = await import('./routes/user.route.js');
     app.use('/api/users', userRoutes);
 
@@ -84,10 +68,28 @@ async function start() {
     // Centralized Global Error Handler Middleware
     app.use(errorHandler);
 
+    // 🚀 Start listening on PORT immediately so Render port scanner detects it right away
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Production microservice listening cleanly on address interface 0.0.0.0:${PORT}`);
       console.log(`📖 Swagger API Docs interactive UI available at: http://localhost:${PORT}/api-docs`);
     });
+
+    // 🍃 Connect to MongoDB Atlas (with automatic retries if IP is being whitelisted)
+    connectDB();
+
+    if (redisClient) {
+      try {
+        if (!redisClient.isOpen) {
+          await redisClient.connect();
+          console.log('⚡ User Service connected to Redis store successfully!');
+        }
+      } catch (err) {
+        console.error('❌ Redis Connection Error:', err);
+        console.log('⚠️ Continuing boot cycle using fallback localized tracking arrays...');
+      }
+    } else {
+      console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
+    }
 
     process.on('unhandledRejection', (err) => {
       console.error('🔥 UNHANDLED REJECTION! Shutting down gracefully...', err);
