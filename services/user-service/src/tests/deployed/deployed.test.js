@@ -4,8 +4,8 @@ import { jest } from '@jest/globals';
 const DEPLOYED_URL = process.env.DEPLOYED_URL || 'https://clinic-user-service.onrender.com';
 
 describe('Deployed User Service Live E2E Tests', () => {
-  // Give Render cloud requests ample timeout (15s per test)
-  jest.setTimeout(15000);
+  // Give Render cloud requests ample timeout (30s per test to handle cloud cold-starts)
+  jest.setTimeout(30000);
 
   let adminAccessToken;
   let doctorId;
