@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Reusable password validation (ensures consistency across endpoints)
-const passwordSchema = z.string()
+const passwordSchema = z.string({ error: 'All fields are required' })
   .min(8, 'Password must be at least 8 characters long')
   .max(128, 'Password must not exceed 128 characters')
   .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
@@ -11,12 +11,14 @@ const passwordSchema = z.string()
 // POST /register
 export const registerSchema = z.object({
   body: z.object({
-    name: z.string().min(2, 'Name must be at least 2 characters').max(100),
-    email: z.string().email('Invalid email address'),
+    name: z.string({ error: 'All fields are required' }).min(2, 'Name must be at least 2 characters').max(100),
+    email: z.string({ error: 'All fields are required' }).email('Invalid email address'),
     password: passwordSchema,
-    phoneNumber: z.string().min(9, 'Phone number is required'),
-    gender: z.enum(['male', 'female', 'other'], { errorMap: () => ({ message: 'Gender must be male, female, or other' }) }),
-    address: z.string().min(5, 'Address is required'),
+    phoneNumber: z.string({ error: 'All fields are required' }).min(9, 'Phone number is required'),
+    gender: z.enum(['male', 'female', 'other'], { 
+      error: (issue) => issue.input === undefined ? 'All fields are required' : 'Gender must be male, female, or other'
+    }),
+    address: z.string({ error: 'All fields are required' }).min(5, 'Address is required'),
     role: z.enum(['patient', 'doctor', 'admin']).optional(), // default is patient
   }),
 });

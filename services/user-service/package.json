@@ -9,7 +9,8 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "seed": "node scripts/seed.js",
-    "test": "JWT_ACCESS_SECRET=test_access_secret JWT_REFRESH_SECRET=test_refresh_secret JWT_ACCESS_EXPIRES_IN=15m JWT_REFRESH_EXPIRES_IN=7d node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --forceExit"
+    "test": "JWT_ACCESS_SECRET=test_access_secret JWT_REFRESH_SECRET=test_refresh_secret JWT_ACCESS_EXPIRES_IN=15m JWT_REFRESH_EXPIRES_IN=7d node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --forceExit",
+    "test:deployed": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/deployed/deployed.test.js --detectOpenHandles --forceExit"
   },
   "type": "module",
   "keywords": [],

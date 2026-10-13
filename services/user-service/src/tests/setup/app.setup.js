@@ -1,6 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import userRoutes from '../../routes/user.route.js';
+import { errorHandler } from '../../middleware/error.middleware.js';
 
 // We create a fresh Express app specifically for testing to avoid 
 // port conflicts and running the actual production server initialization.
@@ -12,4 +13,8 @@ app.use(express.json());
 // Mount the routes we want to test
 app.use('/api/users', userRoutes);
 
+// Centralized Global Error Handler Middleware
+app.use(errorHandler);
+
 export default app;
+

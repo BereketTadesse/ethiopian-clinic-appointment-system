@@ -32,17 +32,18 @@ const createUser = async (req, res) => {
   try {
     const { name, email, phoneNumber, address, password, role, gender } = req.body;
 
+    if (!name || !email || !phoneNumber || !address || !password || !gender) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+
     // Check if user already exists
     const existingUser = await User.findOne({ email }).session(session);
     if (existingUser) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: 'User with this email already exists' });
-    }
-    if (!name || !email || !phoneNumber || !address || !password || !gender) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: 'All fields are required' });
     }
     // Hash the password before saving
     const salt = await bcrypt.genSalt(10);
