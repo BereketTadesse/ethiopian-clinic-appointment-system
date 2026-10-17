@@ -19,7 +19,7 @@ export const registerSchema = z.object({
       error: (issue) => issue.input === undefined ? 'All fields are required' : 'Gender must be male, female, or other'
     }),
     address: z.string({ error: 'All fields are required' }).min(5, 'Address is required'),
-    role: z.enum(['patient', 'doctor', 'admin']).optional(), // default is patient
+    role: z.enum(['patient', 'doctor', 'admin', 'receptionist']).optional(), // default is patient
   }),
 });
 

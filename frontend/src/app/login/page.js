@@ -31,6 +31,8 @@ function LoginForm() {
         router.push('/doctor/dashboard');
       } else if (res?.user?.role === 'admin') {
         router.push('/admin/dashboard');
+      } else if (res?.user?.role === 'receptionist') {
+        router.push('/reception/dashboard');
       } else {
         router.push('/dashboard');
       }
@@ -41,6 +43,7 @@ function LoginForm() {
       setSubmitting(false);
     }
   };
+
 
   const handleDemoAdminLogin = async () => {
     setError('');
@@ -100,6 +103,34 @@ function LoginForm() {
       localStorage.setItem('accessToken', 'mock-doctor-token');
       if (updateUserState) updateUserState(demoDoctor);
       router.push('/doctor/dashboard');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDemoReceptionistLogin = async () => {
+    setError('');
+    setSubmitting(true);
+    try {
+      setEmail('reception@clinic.et');
+      setPassword('Reception@123');
+      const res = await login('reception@clinic.et', 'Reception@123');
+      router.push('/reception/dashboard');
+    } catch (e) {
+      const demoReceptionist = {
+        id: '6ad3619dbae61b560e7308d6',
+        _id: '6ad3619dbae61b560e7308d6',
+        name: 'Selamawit Tadesse',
+        email: 'reception@clinic.et',
+        phoneNumber: '+251911223344',
+        role: 'receptionist',
+        gender: 'female',
+        address: 'Addis Ababa, Bole'
+      };
+      localStorage.setItem('user', JSON.stringify(demoReceptionist));
+      localStorage.setItem('accessToken', 'mock-receptionist-token');
+      if (updateUserState) updateUserState(demoReceptionist);
+      router.push('/reception/dashboard');
     } finally {
       setSubmitting(false);
     }
@@ -275,13 +306,40 @@ function LoginForm() {
                 justifyContent: 'center',
                 gap: '8px',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.15s ease',
+                marginBottom: '8px'
               }}
             >
               <span>🩺 Demo: Log in as Doctor (ዶ/ር አበበ)</span>
             </button>
+
+            {/* Receptionist Demo Button */}
+            <button
+              type="button"
+              onClick={handleDemoReceptionistLogin}
+              disabled={submitting}
+              suppressHydrationWarning
+              style={{
+                width: '100%',
+                padding: '9px 14px',
+                borderRadius: '8px',
+                background: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                color: '#065f46',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span>📋 Demo: Log in as Receptionist (ሰላማዊት ታደሰ)</span>
+            </button>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '8px' }} suppressHydrationWarning>
-              Admin: <code>admin@clinic.et</code> • Doctor: <code>doctor.abebe@clinic.et</code>
+              Admin: <code>admin@clinic.et</code> • Receptionist: <code>reception@clinic.et</code>
             </div>
           </div>
         </form>

@@ -7,6 +7,8 @@ import cookieParser from 'cookie-parser';
 import redisClient from './config/redis.js';
 import clinicRoutes from './routes/clinic.routes.js';
 import { initSlotCronScheduler, runDailySlotAllocation } from './cron/slotCron.js';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerDocument } from './config/swagger.js';
 
 const app = express();
 
@@ -16,14 +18,33 @@ app.use(express.urlencoded({ extended: true })); // ✅ Also parse form data
 const PORT = process.env.PORT || process.env.CLINIC_PORT || 3002;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://your-clinic-frontend.vercel.app';
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  FRONTEND_URL
+];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? FRONTEND_URL
-    : 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 
 app.use(cookieParser());
+
+// 📖 Swagger API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  customSiteTitle: "Ethiopian Clinic API Documentation - Clinic Service",
+  swaggerOptions: {
+    persistAuthorization: true,
+    docExpansion: 'none',
+    filter: true
+  }
+}));
 
 async function start() {
   await connectDB(); // ⚠️ Must await — slot generation below needs the DB to be ready
@@ -38,10 +59,7 @@ async function start() {
     console.warn('⚠️ Redis is not configured. Set REDIS_URL to enable Redis caching/session storage.');
   }
 
-
-
   // Import routes after Redis connect attempt
-  // const { default: clinicRoutes } = await import('./routes/clinic.route.js');
   app.use('/api/clinics', clinicRoutes);
 
   app.get('/health', (req, res) => {
@@ -55,13 +73,13 @@ async function start() {
   initSlotCronScheduler();
 
   // 🚀 Run slot generation immediately on startup so slots exist right away.
-  // Today (daysAhead=0)   → patients can book NOW
-  // Tomorrow (daysAhead=1) → pre-populate the next day's schedule
-  // Safe to call multiple times: MongoDB unique index prevents any duplicates.
   runDailySlotAllocation(0); // today
   runDailySlotAllocation(1); // tomorrow
 
-  app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`📖 Swagger API Docs interactive UI available at: http://localhost:${PORT}/api-docs`);
+  });
 }
 
 start();

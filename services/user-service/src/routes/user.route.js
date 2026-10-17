@@ -2,14 +2,15 @@ import express from 'express';
 import { createUser , verifyEmail,loginUser ,logoutUser, refreshAccessToken, testTokens, checkRefreshTokenStatus, forgotPassword ,resetPassword
     ,changePassword,uploadProfile,updateProfile,createPatientProfile,getProfileById,requestEmailUpdate,
     confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById,createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember,
-    createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile
+    createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
+    createReceptionist, getReceptionists, toggleReceptionistStatus
 } from '../controllers/user.controller.js';
 import { protect , authorizeAdmin } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 import {authRateLimiter, generalRateLimiter} from '../middleware/rateLimiter.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, changePasswordSchema } from '../validations/auth.validation.js';
-import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema } from '../validations/profile.validation.js';
+import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema, createReceptionistSchema } from '../validations/profile.validation.js';
 import {
   createFamilyMemberSchema,
   updateFamilyMemberSchema,
@@ -43,6 +44,12 @@ router.get('/confirm-email-update/:token', confirmEmailUpdate);
 router.delete('/delete-me', protect, generalRateLimiter, deleteMe);
 router.patch('/admin/update-user-status/:id', protect, authorizeAdmin, generalRateLimiter, validate(adminUpdateStatusSchema), adminUpdateUserStatus);
 router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, validate(getUsersSchema), getUsers);
+
+// Receptionist Staff Management (Admin Only)
+router.post('/admin/receptionist', protect, authorizeAdmin, generalRateLimiter, validate(createReceptionistSchema), createReceptionist);
+router.get('/admin/receptionists', protect, authorizeAdmin, generalRateLimiter, getReceptionists);
+router.patch('/admin/receptionists/:id/toggle', protect, authorizeAdmin, generalRateLimiter, toggleReceptionistStatus);
+
 
 // Family Member routes
 router.post('/createFamilyMember', protect, generalRateLimiter, validate(createFamilyMemberSchema), createFamilyMember);

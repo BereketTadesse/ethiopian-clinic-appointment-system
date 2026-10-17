@@ -36,3 +36,11 @@ export const authorizeAdmin = (req, res, next) => {
   }
   next();
 };
+
+export const authorizeStaff = (req, res, next) => {
+  if (['admin', 'receptionist'].includes(req.user?.role)) {
+    return next();
+  }
+  return res.status(403).json({ message: 'Access denied: Admin or Receptionist role required' });
+};
+

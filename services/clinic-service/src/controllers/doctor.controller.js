@@ -1,9 +1,10 @@
 
 import Doctor from '../models/doctor.model.js';
+import Slot from '../models/slot.model.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
-const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'https://clinic-user-service.onrender.com';
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const USER_SERVICE_TIMEOUT_MS = Number(process.env.USER_SERVICE_TIMEOUT_MS) || 5000;
 const USER_SERVICE_SYNC_ATTEMPTS = Math.max(
   1,
@@ -60,8 +61,12 @@ const syncDoctorUserStatus = async ({ doctorId, isActive, token }) => {
 
 const getAllDoctors = async (req, res) => {
   try {
-    const { specialization } = req.query;
-    let queryFilter = { isActive: true };
+    const { specialization, all, includeInactive } = req.query;
+    let queryFilter = {};
+
+    if (all !== 'true' && includeInactive !== 'true') {
+      queryFilter.isActive = true;
+    }
 
     // If a patient wants to filter exclusively by a department (e.g. Dental)
     if (specialization) {
@@ -411,4 +416,387 @@ const toggleDoctorStatus = async (req, res) => {
   }
 };
 
-export { getAllDoctors, createDoctorProfile, getDoctorById, doctorSelfUpdate, updateDoctorProfile, toggleDoctorStatus };
+// 🏖️ DOCTOR ROLE ONLY: Request a leave period (Starts in 'pending' status for admin review)
+const requestDoctorLeave = async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { startDate, endDate, reason } = req.body;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both startDate and endDate (YYYY-MM-DD) are required.'
+      });
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Expected YYYY-MM-DD (e.g. 2026-10-20).'
+      });
+    }
+
+    if (startDate > endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'startDate cannot be after endDate.'
+      });
+    }
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    doctor.leaves = doctor.leaves || [];
+    const newLeave = {
+      startDate,
+      endDate,
+      reason: reason || 'Personal / Medical Leave',
+      status: 'pending', // Starts pending until an admin approves it
+      createdAt: new Date()
+    };
+
+    doctor.leaves.push(newLeave);
+    await doctor.save();
+
+    console.log(`📝 [Leave Request] Doctor ${doctorId} submitted leave request for ${startDate} to ${endDate} (Pending Admin Review).`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Leave request submitted successfully. It is now pending administrator approval.',
+      data: doctor.leaves[doctor.leaves.length - 1]
+    });
+  } catch (error) {
+    console.error('Error submitting doctor leave request:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to submit leave request',
+      error: error.message
+    });
+  }
+};
+
+// 🏖️ DOCTOR ROLE ONLY: Get own leave requests and statuses
+const getMyLeaves = async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const doctor = await Doctor.findById(doctorId).select('leaves');
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: doctor.leaves?.length || 0,
+      data: doctor.leaves || []
+    });
+  } catch (error) {
+    console.error('Error fetching doctor self leaves:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve leaves',
+      error: error.message
+    });
+  }
+};
+
+// 👑 ADMIN ONLY: View all leave requests across all doctors
+const getAllDoctorLeaveRequests = async (req, res) => {
+  try {
+    const { status } = req.query; // optional filter: 'pending', 'approved', 'rejected'
+
+    const doctors = await Doctor.find({ 'leaves.0': { $exists: true } });
+
+    const allRequests = [];
+    doctors.forEach((doc) => {
+      doc.leaves.forEach((l) => {
+        if (!status || l.status === status) {
+          allRequests.push({
+            doctorId: doc._id,
+            specialization: doc.specialization,
+            licenseNumber: doc.licenseNumber,
+            leaveId: l._id,
+            startDate: l.startDate,
+            endDate: l.endDate,
+            reason: l.reason,
+            status: l.status,
+            adminNotes: l.adminNotes,
+            reviewedBy: l.reviewedBy,
+            reviewedAt: l.reviewedAt,
+            createdAt: l.createdAt
+          });
+        }
+      });
+    });
+
+    // Sort newest request first
+    allRequests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return res.status(200).json({
+      success: true,
+      count: allRequests.length,
+      data: allRequests
+    });
+  } catch (error) {
+    console.error('Error fetching all doctor leave requests for admin:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch doctor leave requests',
+      error: error.message
+    });
+  }
+};
+
+// 👑 ADMIN ONLY: Approve or Reject a doctor's leave request
+const reviewDoctorLeaveRequest = async (req, res) => {
+  try {
+    const { doctorId, leaveId } = req.params;
+    const { status, adminNotes } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Must be either "approved" or "rejected".'
+      });
+    }
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    const leave = doctor.leaves.id(leaveId);
+    if (!leave) {
+      return res.status(404).json({ success: false, message: 'Leave request not found.' });
+    }
+
+    leave.status = status;
+    leave.adminNotes = adminNotes || (status === 'approved' ? 'Approved by administrator' : 'Rejected by administrator');
+    leave.reviewedBy = req.user.id;
+    leave.reviewedAt = new Date();
+
+    let slotRemovalCount = 0;
+    let bookedNotice = '';
+
+    if (status === 'approved') {
+      // 🧹 CASCADE: Automatically purge unbooked slots during approved leave period!
+      const removalResult = await Slot.deleteMany({
+        doctorId,
+        date: { $gte: leave.startDate, $lte: leave.endDate },
+        status: 'available'
+      });
+      slotRemovalCount = removalResult.deletedCount;
+
+      const bookedCount = await Slot.countDocuments({
+        doctorId,
+        date: { $gte: leave.startDate, $lte: leave.endDate },
+        status: 'booked'
+      });
+
+      bookedNotice = bookedCount > 0
+        ? `⚠️ Notice: ${bookedCount} patient appointment(s) were already booked during this leave period and need rescheduling.`
+        : 'Zero conflicting appointments were booked during this period.';
+
+      console.log(`✅ [Leave Approved] Admin approved leave for Doctor ${doctorId} (${leave.startDate} to ${leave.endDate}). Removed ${slotRemovalCount} unbooked slot(s).`);
+    } else {
+      console.log(`❌ [Leave Rejected] Admin rejected leave for Doctor ${doctorId} (${leave.startDate} to ${leave.endDate}). Reason: ${leave.adminNotes}`);
+    }
+
+    await doctor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Leave request for Doctor ${doctorId} has been ${status}.`,
+      data: {
+        leave,
+        unbookedSlotsRemoved: slotRemovalCount,
+        bookedAppointmentsNotice: bookedNotice
+      }
+    });
+  } catch (error) {
+    console.error('Error reviewing doctor leave request:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to review leave request',
+      error: error.message
+    });
+  }
+};
+
+const addDoctorLeave = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { startDate, endDate, reason } = req.body;
+
+    // Authorization: Only admin or the doctor themselves can submit leave
+    if (req.user.role !== 'admin' && req.user.id !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access Denied: You do not have permission to manage leaves for this doctor.'
+      });
+    }
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both startDate and endDate (YYYY-MM-DD) are required.'
+      });
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Expected YYYY-MM-DD (e.g. 2026-10-20).'
+      });
+    }
+
+    if (startDate > endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'startDate cannot be after endDate.'
+      });
+    }
+
+    const doctor = await Doctor.findById(id);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    const leaveStatus = req.user.role === 'admin' ? 'approved' : 'pending';
+
+    doctor.leaves = doctor.leaves || [];
+    const newLeave = {
+      startDate,
+      endDate,
+      reason: reason || 'Scheduled Leave / Absence',
+      status: leaveStatus,
+      createdAt: new Date()
+    };
+
+    doctor.leaves.push(newLeave);
+    await doctor.save();
+
+    let slotRemovalCount = 0;
+    let bookedNotice = '';
+
+    if (leaveStatus === 'approved') {
+      const slotRemovalResult = await Slot.deleteMany({
+        doctorId: id,
+        date: { $gte: startDate, $lte: endDate },
+        status: 'available'
+      });
+      slotRemovalCount = slotRemovalResult.deletedCount;
+
+      const bookedCount = await Slot.countDocuments({
+        doctorId: id,
+        date: { $gte: startDate, $lte: endDate },
+        status: 'booked'
+      });
+
+      bookedNotice = bookedCount > 0
+        ? `⚠️ Warning: ${bookedCount} patient appointment(s) are already booked during this leave period and need rescheduling.`
+        : 'Zero conflicting appointments were booked during this period.';
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: leaveStatus === 'approved' 
+        ? `Leave successfully recorded and approved from ${startDate} to ${endDate}.`
+        : `Leave request submitted and pending administrator approval.`,
+      data: {
+        leave: doctor.leaves[doctor.leaves.length - 1],
+        unbookedSlotsRemoved: slotRemovalCount,
+        existingBookedAppointmentsNotice: bookedNotice
+      }
+    });
+  } catch (error) {
+    console.error('Error adding doctor leave:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to record doctor leave',
+      error: error.message
+    });
+  }
+};
+
+const getDoctorLeaves = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doctor = await Doctor.findById(id).select('leaves');
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: doctor.leaves?.length || 0,
+      data: doctor.leaves || []
+    });
+  } catch (error) {
+    console.error('Error fetching doctor leaves:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch doctor leaves',
+      error: error.message
+    });
+  }
+};
+
+const deleteDoctorLeave = async (req, res) => {
+  try {
+    const { id, leaveId } = req.params;
+
+    if (req.user.role !== 'admin' && req.user.id !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access Denied: You do not have permission to modify this doctor profile.'
+      });
+    }
+
+    const doctor = await Doctor.findById(id);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    const initialLength = doctor.leaves.length;
+    doctor.leaves = doctor.leaves.filter(l => l._id.toString() !== leaveId);
+
+    if (doctor.leaves.length === initialLength) {
+      return res.status(404).json({ success: false, message: 'Leave record not found.' });
+    }
+
+    await doctor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Leave period cancelled and removed successfully.',
+      data: doctor.leaves
+    });
+  } catch (error) {
+    console.error('Error deleting doctor leave:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to remove doctor leave',
+      error: error.message
+    });
+  }
+};
+
+export { 
+  getAllDoctors, 
+  createDoctorProfile, 
+  getDoctorById, 
+  doctorSelfUpdate, 
+  updateDoctorProfile, 
+  toggleDoctorStatus,
+  requestDoctorLeave,
+  getMyLeaves,
+  getAllDoctorLeaveRequests,
+  reviewDoctorLeaveRequest,
+  addDoctorLeave,
+  getDoctorLeaves,
+  deleteDoctorLeave
+};

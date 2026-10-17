@@ -88,7 +88,10 @@ export const blockSlots = async (req, res) => {
 
 export const cancelBlockedSlot = async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id || req.body.slotId || req.body.id;
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Time slot ID is required.' });
+    }
     const slot = await Slot.findById(id);
     if (!slot) {
       return res.status(404).json({ success: false, message: 'Time slot record not found.' });
@@ -130,7 +133,10 @@ export const bookslots = async(req,res)=>{
 
 export const releaseSlot = async(req,res) =>{
   try{
-    const {id} = req.params;
+    const id = req.params.id || req.body.slotId || req.body.id;
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Time slot ID is required.' });
+    }
     const slot = await Slot.findById(id);
     if (!slot) {
       return res.status(404).json({ success: false, message: 'Time slot record not found.' });
@@ -149,4 +155,22 @@ export const releaseSlot = async(req,res) =>{
   }catch(error){
     return res.status(500).json({success:false,message:'Failed to release slot.',error:error.message});
   }
-}
+};
+
+export const triggerExpiredSlotCleanup = async (req, res) => {
+  try {
+    const { cleanExpiredSlots } = await import('../cron/slotCron.js');
+    const cleanedCount = await cleanExpiredSlots();
+    return res.status(200).json({
+      success: true,
+      message: `Expired slot cleanup completed. Marked ${cleanedCount} unbooked slot(s) from past dates as 'expired'.`,
+      cleanedCount
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to execute expired slot cleanup',
+      error: error.message
+    });
+  }
+};

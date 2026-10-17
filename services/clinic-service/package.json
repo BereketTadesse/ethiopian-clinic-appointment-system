@@ -31,7 +31,8 @@
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "rate-limit-redis": "^5.0.0",
-    "redis": "^6.0.0"
+    "redis": "^6.0.0",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "jest": "^30.3.0",

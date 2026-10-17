@@ -531,7 +531,8 @@ const resetPassword = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
 
-    const { currentPassword, newPassword } = req.body;
+    const currentPassword = req.body.currentPassword || req.body.oldPassword;
+    const { newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ message: 'Current and new password are required' });
@@ -600,9 +601,8 @@ const uploadProfile = async (req, res) => {
         { new: true, upsert: true } // upsert creates the document if this is their first time onboarding!
       ).populate('user', 'name email phoneNumber role profilePicture');
 
-    } else if (userRole === 'doctor') {
-      // For doctors, core onboarding details are saved on User model.
-      // Clinical details are managed directly in clinic-service.
+    } else if (userRole === 'doctor' || userRole === 'admin' || userRole === 'receptionist') {
+      // For doctors, admins, and receptionists, core onboarding details are saved on User model.
       detailedProfile = await User.findById(userId).select('-password');
     } else {
       return res.status(400).json({ success: false, message: 'Invalid role assignment for onboarding.' });
@@ -702,6 +702,8 @@ const updateProfile = async (req, res) => {
         }
       }
 
+      detailedProfile = await User.findById(userId).select('-password');
+    } else if (userRole === 'admin' || userRole === 'receptionist') {
       detailedProfile = await User.findById(userId).select('-password');
     } else {
       return res.status(400).json({ success: false, message: 'Invalid role structural setup for profiles.' });
@@ -1398,9 +1400,128 @@ const updateFamilyMemberProfile = async (req, res) => {
   }
 };
 
+// ============================================================
+// 📋 RECEPTIONIST MANAGEMENT (ADMIN CONTROLLED)
+// ============================================================
+
+/**
+ * @desc    Admin creates a front-desk receptionist account with direct credentials
+ * @route   POST /api/users/admin/receptionist
+ * @access  Private (Admin Only)
+ */
+const createReceptionist = async (req, res) => {
+  try {
+    const { name, email, phoneNumber, password, gender, address } = req.body;
+
+    if (!name || !email || !phoneNumber || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, phone number, and password are required to onboard a receptionist.'
+      });
+    }
+
+    // Check if user already exists with this email or phone
+    const existing = await User.findOne({
+      $or: [{ email: email.toLowerCase().trim() }, { phoneNumber: phoneNumber.trim() }]
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: existing.email === email.toLowerCase().trim()
+          ? 'An account with this email address already exists.'
+          : 'An account with this phone number already exists.'
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const receptionist = await User.create({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phoneNumber: phoneNumber.trim(),
+      password: hashedPassword,
+      gender: gender || 'female',
+      address: address ? address.trim() : 'Addis Ababa, Ethiopia',
+      role: 'receptionist',
+      isVerified: true, // Direct onboarding by admin: pre-verified
+      isActive: true
+    });
+
+    const safeReceptionist = await User.findById(receptionist._id).select('-password');
+
+    return res.status(201).json({
+      success: true,
+      message: 'Front Desk Receptionist created successfully! They can log in immediately.',
+      data: safeReceptionist
+    });
+  } catch (error) {
+    console.error(`❌ Create Receptionist Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message || 'Internal Server Error' });
+  }
+};
+
+/**
+ * @desc    Admin lists all clinic receptionists
+ * @route   GET /api/users/admin/receptionists
+ * @access  Private (Admin Only)
+ */
+const getReceptionists = async (req, res) => {
+  try {
+    const receptionists = await User.find({ role: 'receptionist' })
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: receptionists.length,
+      data: receptionists
+    });
+  } catch (error) {
+    console.error(`❌ Get Receptionists Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+/**
+ * @desc    Admin toggles active/suspended status for a receptionist
+ * @route   PATCH /api/users/admin/receptionists/:id/toggle
+ * @access  Private (Admin Only)
+ */
+const toggleReceptionistStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const receptionist = await User.findOne({ _id: id, role: 'receptionist' });
+
+    if (!receptionist) {
+      return res.status(404).json({ success: false, message: 'Receptionist account not found.' });
+    }
+
+    receptionist.isActive = !receptionist.isActive;
+    await receptionist.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Receptionist has been ${receptionist.isActive ? 'activated' : 'suspended'}.`,
+      data: {
+        _id: receptionist._id,
+        name: receptionist.name,
+        email: receptionist.email,
+        isActive: receptionist.isActive
+      }
+    });
+  } catch (error) {
+    console.error(`❌ Toggle Receptionist Status Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
 export {
   createUser, verifyEmail, loginUser, logoutUser, refreshAccessToken, testTokens, checkRefreshTokenStatus, forgotPassword, resetPassword, changePassword, uploadProfile, updateProfile, createPatientProfile, getProfileById,
   getPublicDoctorAccountById, requestEmailUpdate, confirmEmailUpdate, deleteMe, getUsers, adminUpdateUserStatus,
   createFamilyMember, updateFamilyMember, deleteFamilyMember, getAllFamilyMembers, getOneFamilyMember,
-  createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile
+  createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
+  createReceptionist, getReceptionists, toggleReceptionistStatus
 };
+

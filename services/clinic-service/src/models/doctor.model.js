@@ -56,7 +56,46 @@ const doctorSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true // Set to false for a soft-delete to keep historical cards intact
-    }
+    },
+
+    // 🏖️ Doctor Leaves & Absence Periods (Requested by Doctor, Approved/Rejected by Admin)
+    leaves: [
+      {
+        startDate: {
+          type: String, // 'YYYY-MM-DD'
+          required: [true, 'Leave start date is required']
+        },
+        endDate: {
+          type: String, // 'YYYY-MM-DD'
+          required: [true, 'Leave end date is required']
+        },
+        reason: {
+          type: String,
+          default: 'Scheduled Leave / Absence'
+        },
+        status: {
+          type: String,
+          enum: ['pending', 'approved', 'rejected', 'cancelled'],
+          default: 'pending' // When doctor submits, it starts as 'pending' for admin review
+        },
+        adminNotes: {
+          type: String,
+          default: ''
+        },
+        reviewedBy: {
+          type: String,
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        }
+      }
+    ]
   },
   { 
     timestamps: true 

@@ -7,12 +7,13 @@ import redisClient from '../config/redis.js';
 export const protect = async (req, res, next) => {
   let token;
 
-  // 1. Extract the token straight out of the incoming request cookies
-  if (req.cookies && req.cookies.token) {
+  // 1. Extract Bearer token from Authorization header (case-insensitive)
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.cookies && req.cookies.token) {
+    // Secondary fallback for browser cookie sessions
     token = req.cookies.token;
-  } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    // Optional fallback if you want to support Authorization headers during Postman tests
-    token = req.headers.authorization.split(' ')[1];
   }
 
   // 2. If no token is present, block entry immediately
@@ -23,9 +24,20 @@ export const protect = async (req, res, next) => {
     });
   }
 
+  // Development & Demo mode token fallback (ensures offline preview / demo accounts work)
+  if (process.env.NODE_ENV !== 'production' && (token === 'mock-doctor-token' || token === 'mock-admin-token')) {
+    req.user = {
+      id: token === 'mock-doctor-token' ? '6abd0a4b4ad8c9e8e1741980' : '6abd0a4b4ad8c9e8e174197f',
+      role: token === 'mock-doctor-token' ? 'doctor' : 'admin',
+      name: token === 'mock-doctor-token' ? 'Dr. Abebe Bekele' : 'System Administrator'
+    };
+    return next();
+  }
+
   try {
-    // 3. Cryptographically decode and verify the token signature using your secret key
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // 3. Cryptographically decode and verify using unified JWT access secret
+    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'care-sync-ethiopia-fallback-access-secret-2026';
+    const decoded = jwt.verify(token, accessSecret);
 
     // 4. THE REDIS BLACKLIST BARRIER: Check if this specific token session was destroyed on logout
     if (decoded.jti && redisClient) {
@@ -39,13 +51,11 @@ export const protect = async (req, res, next) => {
       }
     }
 
-    // 5. FIXED: No more User.findById database check!
-    // Instead, we construct the user data directly from the verified token payload.
-    // Ensure your User Service includes 'role' when it signs the JWT token!
+    // 5. Construct user data directly from the verified token payload
     req.user = {
-      id: decoded.userId || decoded.id, // Fallback safety to check both common naming formats
+      id: decoded.userId || decoded.id, // Handles both naming conventions from user-service
       role: decoded.role,
-      name: decoded.name // optional addition if needed
+      name: decoded.name
     };
 
     if (!req.user.role) {
@@ -55,13 +65,20 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    // 6. Success! Pass the request along to the actual controller logic
+    // 6. Success! Pass the request along to the controller
     next();
   } catch (error) {
-    console.error(`❌ Authentication Middleware Error: ${error.message}`);
+    console.error(`❌ Authentication Middleware Error: ${error.name} - ${error.message}`);
+    const message =
+      error.name === 'TokenExpiredError'
+        ? 'Session expired. Please log in again.'
+        : error.name === 'JsonWebTokenError'
+        ? 'Invalid token. Please log in again.'
+        : 'Session invalid or expired. Please log in again.';
+
     return res.status(401).json({
       success: false,
-      message: 'Session invalid or expired. Please log in again.'
+      message
     });
   }
 };
@@ -83,11 +100,26 @@ export const authorizeAdmin = (req, res, next) => {
 
 export const authorizeDoctor = (req, res, next) => {
   if (req.user && req.user.role === 'doctor') {
-    next(); // User is an admin, let them pass!
+    next();
   } else {
     return res.status(403).json({
       success: false,
-      message: 'Access Denied: Administrative privileges are required to perform this operation.'
+      message: 'Access Denied: Doctor privileges are required to perform this operation.'
     });
   }
 };
+
+/**
+ * Allows both Admin and Front-Desk Receptionist staff roles
+ */
+export const authorizeStaff = (req, res, next) => {
+  if (req.user && ['admin', 'receptionist'].includes(req.user.role)) {
+    next();
+  } else {
+    return res.status(403).json({
+      success: false,
+      message: 'Access Denied: Administrative or Front Desk Receptionist privileges are required.'
+    });
+  }
+};
+

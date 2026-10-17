@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
-import { Activity, User, LogOut, Users, Stethoscope } from 'lucide-react';
+import { Activity, User, LogOut, Users, Stethoscope, Building2, ClipboardList } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout, mounted } = useAuth();
@@ -17,10 +17,20 @@ export default function Navbar() {
 
   const isDoctor = user?.role === 'doctor';
   const isAdmin = user?.role === 'admin';
+  const isReceptionist = user?.role === 'receptionist';
 
-  const brandLink = isAdmin ? '/admin/dashboard' : isDoctor ? '/doctor/dashboard' : '/';
+  const brandLink = isAdmin
+    ? '/admin/dashboard'
+    : isReceptionist
+    ? '/reception/dashboard'
+    : isDoctor
+    ? '/doctor/dashboard'
+    : '/';
+
   const subTitle = isAdmin
-    ? 'CLINIC ADMIN & RECEPTION'
+    ? 'CLINIC ADMIN'
+    : isReceptionist
+    ? 'FRONT DESK RECEPTION'
     : isDoctor
     ? 'PHYSICIAN CLINIC PORTAL'
     : 'CLINIC APPOINTMENTS';
@@ -52,8 +62,14 @@ export default function Navbar() {
                   <Link href="/admin/dashboard" className="navbar-nav-item" suppressHydrationWarning>
                     Operations & Slots
                   </Link>
+                  <Link href="/admin/clinic" className="navbar-nav-item" suppressHydrationWarning style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <Building2 size={15} /> Clinic Profile
+                  </Link>
                   <Link href="/admin/analytics" className="navbar-nav-item" suppressHydrationWarning>
                     Analytics & Revenue
+                  </Link>
+                  <Link href="/profile" className="navbar-nav-item" suppressHydrationWarning style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <User size={15} /> Profile
                   </Link>
                   <span style={{
                     fontSize: '0.75rem',
@@ -68,6 +84,29 @@ export default function Navbar() {
                     gap: '4px'
                   }}>
                     👑 Clinic Admin
+                  </span>
+                </>
+              ) : isReceptionist ? (
+                <>
+                  <Link href="/reception/dashboard" className="navbar-nav-item" suppressHydrationWarning style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <ClipboardList size={16} /> Reception Desk
+                  </Link>
+                  <Link href="/profile" className="navbar-nav-item" suppressHydrationWarning style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <User size={15} /> Profile
+                  </Link>
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    padding: '3px 9px',
+                    borderRadius: '9999px',
+                    background: '#ecfdf5',
+                    color: '#065f46',
+                    border: '1px solid #a7f3d0',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    📋 Front Desk
                   </span>
                 </>
               ) : isDoctor ? (

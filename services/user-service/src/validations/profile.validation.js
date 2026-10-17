@@ -93,7 +93,20 @@ export const getUsersSchema = z.object({
   query: z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(10),
-    role: z.enum(['patient', 'doctor', 'admin']).optional(),
+    role: z.enum(['patient', 'doctor', 'admin', 'receptionist']).optional(),
     search: z.string().optional(),
   }),
 });
+
+// POST /admin/receptionist
+export const createReceptionistSchema = z.object({
+  body: z.object({
+    name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+    email: z.string().email('Invalid email address'),
+    phoneNumber: z.string().min(9, 'Phone number must be at least 9 characters'),
+    password: z.string().min(6, 'Password must be at least 6 characters'),
+    gender: z.enum(['male', 'female', 'other']).optional(),
+    address: z.string().optional(),
+  }),
+});
+

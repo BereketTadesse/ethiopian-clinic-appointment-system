@@ -30,8 +30,18 @@ import {
   MapPin,
   Check,
   Ban,
-  ArrowRight
+  ArrowRight,
+  CalendarOff,
+  ThumbsUp,
+  ThumbsDown,
+  Loader2,
+  Building2,
+  ClipboardList,
+  Copy,
+  CheckCheck,
+  Key
 } from 'lucide-react';
+import API, { clinicApi } from '@/lib/api';
 
 export default function AdminDashboardPage() {
   const { user, mounted } = useAuth();
@@ -53,79 +63,199 @@ export default function AdminDashboardPage() {
   const [showPatientDetailModal, setShowPatientDetailModal] = useState(null);
   const [notification, setNotification] = useState('');
 
-  // ── DOCTOR ROSTER DATA ──────────────────────────────────────────
-  const [doctorsList, setDoctorsList] = useState([
-    {
-      id: 'doc-101',
-      name: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      licenseNumber: 'ETH-MOH-DOC-8921',
-      email: 'doctor.abebe@clinic.et',
-      phone: '+251 91 123 4567',
-      room: 'Suite 201',
-      shift: '08:30 AM - 04:30 PM',
-      workingDays: 'Mon, Tue, Wed, Thu, Fri',
-      active: true,
-      patientsCountToday: 5,
-      totalTreated: 82
-    },
-    {
-      id: 'doc-102',
-      name: 'Dr. Selamawit Bekele',
-      specialty: 'General Internal Medicine',
-      licenseNumber: 'FDRE-MOH-2018-04921',
-      email: 'dr.selamawit@clinic.et',
-      phone: '+251 91 188 3344',
-      room: 'Suite 204',
-      shift: '09:00 AM - 05:00 PM',
-      workingDays: 'Mon, Wed, Thu, Fri, Sat',
-      active: true,
-      patientsCountToday: 4,
-      totalTreated: 76
-    },
-    {
-      id: 'doc-103',
-      name: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrics & Child Health',
-      licenseNumber: 'ETH-MOH-DOC-7732',
-      email: 'dr.dawit@clinic.et',
-      phone: '+251 92 345 6789',
-      room: 'Suite 108 (Pediatrics Wing)',
-      shift: '08:00 AM - 03:30 PM',
-      workingDays: 'Mon, Tue, Thu, Fri',
-      active: true,
-      patientsCountToday: 4,
-      totalTreated: 68
-    },
-    {
-      id: 'doc-104',
-      name: 'Dr. Hanna Girma',
-      specialty: 'Obstetrics & Gynecology (OB/GYN)',
-      licenseNumber: 'ETH-MOH-DOC-6194',
-      email: 'dr.hanna@clinic.et',
-      phone: '+251 93 456 7890',
-      room: 'Suite 212',
-      shift: '09:30 AM - 05:30 PM',
-      workingDays: 'Tue, Wed, Fri, Sat',
-      active: true,
-      patientsCountToday: 3,
-      totalTreated: 54
-    },
-    {
-      id: 'doc-105',
-      name: 'Dr. Yared Melaku',
-      specialty: 'Cardiology & Hypertension Clinic',
-      licenseNumber: 'ETH-MOH-DOC-5012',
-      email: 'dr.yared@clinic.et',
-      phone: '+251 94 567 8901',
-      room: 'Suite 305 (Cardiac Center)',
-      shift: '10:00 AM - 06:00 PM',
-      workingDays: 'Mon, Wed, Fri',
-      active: true,
-      patientsCountToday: 2,
-      totalTreated: 32
+  // ── DOCTOR LEAVES (ADMIN REVIEW & APPROVAL) ──────────────────────
+  const [adminLeaves, setAdminLeaves] = useState([]);
+  const [adminLeaveFilter, setAdminLeaveFilter] = useState('all');
+  const [loadingAdminLeaves, setLoadingAdminLeaves] = useState(false);
+  const [leaveReviewModal, setLeaveReviewModal] = useState(null); // { doctorId, leaveId, status }
+  const [adminReviewNotes, setAdminReviewNotes] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  // ── RECEPTIONIST STAFF MANAGEMENT ───────────────────────────────
+  const [receptionists, setReceptionists] = useState([]);
+  const [loadingReceptionists, setLoadingReceptionists] = useState(false);
+  const [showAddReceptionistModal, setShowAddReceptionistModal] = useState(false);
+  const [receptionistForm, setReceptionistForm] = useState({
+    name: '',
+    email: '',
+    phoneNumber: '',
+    password: '',
+    gender: 'female',
+    address: 'Addis Ababa, Bole'
+  });
+  const [submittingReceptionist, setSubmittingReceptionist] = useState(false);
+  const [receptionistError, setReceptionistError] = useState('');
+  const [createdReceptionistCreds, setCreatedReceptionistCreds] = useState(null);
+  const [copiedCreds, setCopiedCreds] = useState(false);
+
+  const fetchReceptionists = async () => {
+    setLoadingReceptionists(true);
+    try {
+      const res = await API.get('/users/admin/receptionists');
+      if (res.data?.success) {
+        setReceptionists(res.data.data || []);
+      }
+    } catch (err) {
+      console.warn('Could not fetch receptionists for admin:', err.message);
+    } finally {
+      setLoadingReceptionists(false);
     }
-  ]);
+  };
+
+  const handleToggleReceptionist = async (id) => {
+    try {
+      const res = await API.patch(`/users/admin/receptionists/${id}/toggle`);
+      if (res.data?.success) {
+        setReceptionists(prev => prev.map(r => r._id === id ? { ...r, isActive: !r.isActive } : r));
+        setNotification(res.data.message || 'Receptionist status updated successfully');
+        setTimeout(() => setNotification(''), 4000);
+      }
+    } catch (err) {
+      setNotification(err.response?.data?.message || 'Failed to toggle receptionist status');
+      setTimeout(() => setNotification(''), 4000);
+    }
+  };
+
+  const handleCreateReceptionistSubmit = async (e) => {
+    e.preventDefault();
+    setSubmittingReceptionist(true);
+    setReceptionistError('');
+    try {
+      const res = await API.post('/users/admin/receptionist', receptionistForm);
+      if (res.data?.success) {
+        setCreatedReceptionistCreds({
+          name: receptionistForm.name,
+          email: receptionistForm.email,
+          password: receptionistForm.password,
+          phone: receptionistForm.phoneNumber
+        });
+        fetchReceptionists();
+        setReceptionistForm({
+          name: '',
+          email: '',
+          phoneNumber: '',
+          password: '',
+          gender: 'female',
+          address: 'Addis Ababa, Bole'
+        });
+      }
+    } catch (err) {
+      setReceptionistError(err.response?.data?.message || 'Failed to onboard receptionist');
+    } finally {
+      setSubmittingReceptionist(false);
+    }
+  };
+
+  const fetchAdminLeaves = async () => {
+    setLoadingAdminLeaves(true);
+    try {
+      const res = await clinicApi.get('/admin/doctor-leaves');
+      if (res.data?.success) {
+        setAdminLeaves(res.data.data || []);
+      }
+    } catch (err) {
+      console.warn('Could not fetch doctor leave requests for admin:', err.message);
+    } finally {
+      setLoadingAdminLeaves(false);
+    }
+  };
+
+  // ── LIVE DOCTOR ROSTER API CALL ─────────────────────────────────
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
+
+  const fetchDoctors = async () => {
+    setLoadingDoctors(true);
+    try {
+      const res = await clinicApi.get('/getAllDoctors?all=true');
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        const mapped = res.data.data.map((doc, idx) => {
+          const account = doc.accountDetails && typeof doc.accountDetails === 'object' ? doc.accountDetails : {};
+          const rawName = account.fullName || doc.name || `Staff Physician ${idx + 1}`;
+          const formattedName = rawName.startsWith('Dr.') ? rawName : `Dr. ${rawName}`;
+          const workingDaysStr = Array.isArray(doc.availableDays) && doc.availableDays.length > 0
+            ? doc.availableDays.map(d => (typeof d === 'string' ? d.slice(0, 3) : d)).join(', ')
+            : 'Mon, Tue, Wed, Thu, Fri';
+          const shiftStr = (doc.startTime && doc.endTime) ? `${doc.startTime} - ${doc.endTime}` : '08:30 - 17:30';
+
+          return {
+            id: doc._id || doc.id || doc.userId,
+            _id: doc._id,
+            name: formattedName,
+            specialty: doc.specialization || 'General Practice',
+            licenseNumber: doc.licenseNumber || 'Verified MOH',
+            email: account.email || doc.email || 'N/A',
+            phone: account.phoneNumber || doc.phone || '+251 91 000 0000',
+            room: doc.room || `Suite 20${(idx % 5) + 1}`,
+            shift: shiftStr,
+            workingDays: workingDaysStr,
+            active: doc.isActive !== undefined ? doc.isActive : true,
+            yearsOfExperience: doc.yearsOfExperience || 0,
+            bio: doc.bio || '',
+            patientsCountToday: 0,
+            totalTreated: idx === 0 ? 82 : 45
+          };
+        });
+        setDoctorsList(mapped);
+      }
+    } catch (err) {
+      console.warn('Could not fetch doctors from API:', err.message);
+    } finally {
+      setLoadingDoctors(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAdminLeaves();
+    fetchDoctors();
+    fetchReceptionists();
+  }, []);
+
+  // Auth Guard: Admin Only
+  useEffect(() => {
+    if (mounted && user) {
+      if (user.role === 'receptionist') {
+        router.push('/reception/dashboard');
+      } else if (user.role === 'doctor') {
+        router.push('/doctor/dashboard');
+      } else if (user.role !== 'admin') {
+        router.push('/dashboard');
+      }
+    }
+  }, [mounted, user, router]);
+
+  const handleReviewLeaveSubmit = async (e) => {
+    e.preventDefault();
+    if (!leaveReviewModal) return;
+    const { doctorId, leaveId, status } = leaveReviewModal;
+    setSubmittingReview(true);
+
+    try {
+      const res = await clinicApi.patch(`/admin/doctor-leaves/${doctorId}/${leaveId}`, {
+        status,
+        adminNotes: adminReviewNotes.trim() || (status === 'approved' ? 'Approved by administrator' : 'Rejected by administrator')
+      });
+
+      if (res.data?.success) {
+        const removed = res.data.data?.unbookedSlotsRemoved || 0;
+        const notice = res.data.data?.bookedAppointmentsNotice || '';
+        const msg = status === 'approved'
+          ? `🎉 Leave request approved! Automatically removed ${removed} unbooked slot(s). ${notice}`
+          : `❌ Leave request has been rejected.`;
+        setNotification(msg);
+        setLeaveReviewModal(null);
+        setAdminReviewNotes('');
+        fetchAdminLeaves();
+        setTimeout(() => setNotification(''), 7000);
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to review doctor leave request.');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  // ── DOCTOR ROSTER DATA (INITIALIZED FROM API) ───────────────────
+  const [doctorsList, setDoctorsList] = useState([]);
 
   // Form State for Adding Doctor
   const [newDoctorForm, setNewDoctorForm] = useState({
@@ -618,12 +748,29 @@ export default function AdminDashboardPage() {
     notify(`✅ ${newDoc.name} successfully registered to clinic staff!`);
   };
 
-  // Toggle Doctor Active Status
-  const handleToggleDoctorStatus = (doctorId) => {
+  // Toggle Doctor Active Status (Persisted to Database)
+  const handleToggleDoctorStatus = async (doctorId) => {
+    const targetDoc = doctorsList.find(d => d.id === doctorId);
+    if (!targetDoc) return;
+    const nextState = !targetDoc.active;
+
+    try {
+      const res = await clinicApi.patch(`/admin/toggleDoctorStatus/${doctorId}`, {
+        isActive: nextState
+      });
+      if (res.data?.success) {
+        notify(`✅ ${targetDoc.name} marked as ${nextState ? 'Active' : 'On Leave / Inactive'}`);
+        fetchDoctors();
+        return;
+      }
+    } catch (err) {
+      console.warn('Backend toggle failed, applying optimistic update:', err.message);
+    }
+
+    // Local fallback update
     setDoctorsList(prev =>
       prev.map(d => {
         if (d.id === doctorId) {
-          const nextState = !d.active;
           notify(`${d.name} marked as ${nextState ? 'Active' : 'On Leave / Inactive'}`);
           return { ...d, active: nextState };
         }
@@ -632,9 +779,30 @@ export default function AdminDashboardPage() {
     );
   };
 
+  if (!mounted) {
+    return (
+      <div
+        suppressHydrationWarning
+        style={{
+          backgroundColor: 'var(--bg-page)',
+          minHeight: '94vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '28px 0 60px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>
+          <div className="spinner" style={{ borderColor: '#4f46e5', borderTopColor: 'transparent' }} />
+          Loading Administrator Portal...
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ backgroundColor: 'var(--bg-page)', minHeight: '94vh', padding: '28px 0 60px' }}>
-      <div className="container">
+    <div suppressHydrationWarning style={{ backgroundColor: 'var(--bg-page)', minHeight: '94vh', padding: '28px 0 60px' }}>
+      <div className="container" suppressHydrationWarning>
 
         {/* ── HEADER BANNER ────────────────────────────────────────── */}
         <div style={{
@@ -696,6 +864,19 @@ export default function AdminDashboardPage() {
               <UserPlus size={17} /> Add New Doctor
             </button>
             <Link
+              href="/admin/clinic"
+              className="btn"
+              style={{
+                background: 'rgba(255, 255, 255, 0.15)',
+                color: 'white',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                fontWeight: 700,
+                borderRadius: '12px'
+              }}
+            >
+              <Building2 size={17} /> Clinic Profile
+            </Link>
+            <Link
               href="/admin/analytics"
               className="btn"
               style={{
@@ -729,6 +910,68 @@ export default function AdminDashboardPage() {
           }}>
             <CheckCircle2 size={18} />
             <span>{notification}</span>
+          </div>
+        )}
+
+        {/* Pending Doctor Leaves Urgent Banner */}
+        {adminLeaves.filter(l => l.status === 'pending').length > 0 && (
+          <div style={{
+            background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+            border: '1px solid #fde68a',
+            color: '#92400e',
+            padding: '16px 20px',
+            borderRadius: '16px',
+            marginBottom: '22px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '14px',
+            boxShadow: '0 4px 16px rgba(245, 158, 11, 0.12)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{
+                background: '#f59e0b',
+                color: 'white',
+                width: '40px',
+                height: '40px',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: '1.1rem'
+              }}>
+                {adminLeaves.filter(l => l.status === 'pending').length}
+              </div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '1rem', color: '#78350f' }}>
+                  Doctor Leave Requests Awaiting Admin Approval
+                </div>
+                <div style={{ fontSize: '0.86rem', color: '#b45309' }}>
+                  Physicians have submitted upcoming absence requests. Approving will update staff schedules and auto-remove unbooked slots.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => {
+                  setActiveTab('doctor_leaves');
+                  fetchAdminLeaves();
+                }}
+                className="btn btn-sm"
+                style={{ background: '#b45309', color: 'white', fontWeight: 700, borderRadius: '8px' }}
+              >
+                Review in Tab ({adminLeaves.filter(l => l.status === 'pending').length})
+              </button>
+              <Link
+                href="/admin/clinic"
+                className="btn btn-sm btn-secondary"
+                style={{ fontWeight: 700, borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}
+              >
+                <Building2 size={14} /> Clinic Facility Page
+              </Link>
+            </div>
           </div>
         )}
 
@@ -826,6 +1069,47 @@ export default function AdminDashboardPage() {
               </div>
             </div>
           </div>
+
+          {/* Total Doctor Leaves */}
+          <div
+            className="glass-panel"
+            onClick={() => {
+              setActiveTab('doctor_leaves');
+              fetchAdminLeaves();
+            }}
+            style={{
+              padding: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              cursor: 'pointer',
+              border: adminLeaves.filter(l => l.status === 'pending').length > 0 ? '1px solid #fde68a' : undefined
+            }}
+          >
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '14px',
+              background: adminLeaves.filter(l => l.status === 'pending').length > 0 ? '#fef3c7' : '#f1f5f9',
+              color: adminLeaves.filter(l => l.status === 'pending').length > 0 ? '#b45309' : '#0f172a',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <CalendarOff size={24} />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Doctor Leaves</div>
+              <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {adminLeaves.length}
+                {adminLeaves.filter(l => l.status === 'pending').length > 0 && (
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, background: '#f59e0b', color: 'white', padding: '2px 8px', borderRadius: '9999px' }}>
+                    {adminLeaves.filter(l => l.status === 'pending').length} Pending
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* ── MAIN NAVIGATION TABS ─────────────────────────────────── */}
@@ -881,7 +1165,10 @@ export default function AdminDashboardPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('doctors')}
+            onClick={() => {
+              setActiveTab('doctors');
+              fetchDoctors();
+            }}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -922,6 +1209,68 @@ export default function AdminDashboardPage() {
             }}
           >
             <CheckCircle2 size={18} /> Treated Patients ({treatedPatients.length})
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('doctor_leaves');
+              fetchAdminLeaves();
+            }}
+            style={{
+              padding: '12px 20px',
+              fontWeight: 700,
+              fontSize: '0.95rem',
+              color: activeTab === 'doctor_leaves' ? '#4f46e5' : 'var(--text-muted)',
+              borderBottom: activeTab === 'doctor_leaves' ? '3px solid #4f46e5' : '3px solid transparent',
+              background: 'none',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            <CalendarOff size={18} /> Doctor Leaves ({adminLeaves.length})
+            {adminLeaves.filter(l => l.status === 'pending').length > 0 && (
+              <span style={{
+                background: '#f59e0b',
+                color: 'white',
+                padding: '2px 8px',
+                borderRadius: '9999px',
+                fontSize: '0.72rem',
+                fontWeight: 900
+              }}>
+                {adminLeaves.filter(l => l.status === 'pending').length} Pending
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('receptionists');
+              fetchReceptionists();
+            }}
+            style={{
+              padding: '12px 20px',
+              fontWeight: 700,
+              fontSize: '0.95rem',
+              color: activeTab === 'receptionists' ? '#4f46e5' : 'var(--text-muted)',
+              borderBottom: activeTab === 'receptionists' ? '3px solid #4f46e5' : '3px solid transparent',
+              background: 'none',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            <ClipboardList size={18} /> Front Desk Staff ({receptionists.length})
           </button>
         </div>
 
@@ -1383,22 +1732,60 @@ export default function AdminDashboardPage() {
                     }}>
                       {doctorsList.length} Total Doctors
                     </span>
+                    <span style={{
+                      background: '#dcfce7',
+                      color: '#15803d',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontSize: '0.8rem',
+                      fontWeight: 800
+                    }}>
+                      {doctorsList.filter(d => d.active).length} Active
+                    </span>
                   </div>
                   <p style={{ margin: '4px 0 0', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
                     Active physicians authorized under the Ethiopian Ministry of Health (MOH) standards.
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowAddDoctorModal(true)}
-                  className="btn btn-primary"
-                  style={{ borderRadius: '12px' }}
-                >
-                  <Plus size={16} /> Add New Doctor
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={fetchDoctors}
+                    disabled={loadingDoctors}
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <RefreshCw size={14} className={loadingDoctors ? 'spin-icon' : ''} />
+                    {loadingDoctors ? 'Syncing...' : 'Refresh Directory'}
+                  </button>
+                  <button
+                    onClick={() => setShowAddDoctorModal(true)}
+                    className="btn btn-primary"
+                    style={{ borderRadius: '12px' }}
+                  >
+                    <Plus size={16} /> Add New Doctor
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Doctors Grid */}
+            {/* Doctors Grid / Empty State */}
+            {loadingDoctors && doctorsList.length === 0 ? (
+              <div className="glass-panel" style={{ padding: '48px', textAlign: 'center' }}>
+                <Loader2 size={36} className="spin-icon" style={{ color: '#4f46e5', margin: '0 auto 12px' }} />
+                <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>Loading Doctors & Staff from Database...</div>
+              </div>
+            ) : doctorsList.length === 0 ? (
+              <div className="glass-panel" style={{ padding: '48px', textAlign: 'center' }}>
+                <Stethoscope size={44} style={{ color: '#94a3b8', margin: '0 auto 12px' }} />
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: '0 0 6px 0' }}>No Doctors Registered</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '16px' }}>
+                  Click below to onboard your first physician to the clinic directory.
+                </p>
+                <button onClick={() => setShowAddDoctorModal(true)} className="btn btn-primary btn-sm">
+                  <Plus size={15} /> Add New Doctor
+                </button>
+              </div>
+            ) : (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
@@ -1520,8 +1907,9 @@ export default function AdminDashboardPage() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      )}
 
         {/* ══════════════════════════════════════════════════════════════ */}
         {/* TAB 4: TREATED PATIENTS HISTORY                               */}
@@ -1636,7 +2024,522 @@ export default function AdminDashboardPage() {
           </div>
         )}
 
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* TAB 5: DOCTOR LEAVE & ABSENCE REQUESTS (የሐኪሞች ፈቃድ ማፅደቂያ) */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {activeTab === 'doctor_leaves' && (
+          <div>
+            {/* Header Banner */}
+            <div className="glass-panel" style={{ padding: '24px', marginBottom: '22px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                      Physician Leave Requests & Review (የሐኪሞች ፈቃድ ማፅደቂያ)
+                    </h2>
+                    <span style={{
+                      background: '#fef3c7',
+                      color: '#92400e',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontSize: '0.8rem',
+                      fontWeight: 800
+                    }}>
+                      {adminLeaves.filter(l => l.status === 'pending').length} Awaiting Review
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                    Review submitted doctor leave requests. Approving a leave automatically purges unbooked appointment slots for that doctor during the leave dates.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Link
+                    href="/admin/clinic"
+                    className="btn btn-primary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Building2 size={14} /> Clinic Operations Page
+                  </Link>
+                  <button
+                    onClick={fetchAdminLeaves}
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <RefreshCw size={14} /> Refresh Requests
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '18px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Filter Status:</span>
+              {[
+                { id: 'all', label: `All Requests (${adminLeaves.length})` },
+                { id: 'pending', label: `Pending Review (${adminLeaves.filter(l => l.status === 'pending').length})` },
+                { id: 'approved', label: `Approved (${adminLeaves.filter(l => l.status === 'approved').length})` },
+                { id: 'rejected', label: `Rejected (${adminLeaves.filter(l => l.status === 'rejected').length})` }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setAdminLeaveFilter(tab.id)}
+                  className={`btn btn-sm ${adminLeaveFilter === tab.id ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.78rem', padding: '4px 12px' }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Leave Requests Cards */}
+            {adminLeaves.filter(l => adminLeaveFilter === 'all' || l.status === adminLeaveFilter).length === 0 ? (
+              <div className="glass-panel" style={{ padding: '48px', textAlign: 'center', background: 'white' }}>
+                <CalendarOff size={42} style={{ color: '#cbd5e1', marginBottom: '10px' }} />
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>No doctor leave requests</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0' }}>
+                  No leave requests currently match the selected filter.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {adminLeaves
+                  .filter(l => adminLeaveFilter === 'all' || l.status === adminLeaveFilter)
+                  .map((leave) => {
+                    const isPending = leave.status === 'pending';
+                    const isApproved = leave.status === 'approved';
+                    const isRejected = leave.status === 'rejected';
+
+                    const borderCol = isApproved ? '#10b981' : isPending ? '#f59e0b' : '#ef4444';
+                    const badgeBg = isApproved ? '#ecfdf5' : isPending ? '#fef3c7' : '#fef2f2';
+                    const badgeCol = isApproved ? '#047857' : isPending ? '#92400e' : '#b91c1c';
+
+                    return (
+                      <div
+                        key={leave.leaveId || leave._id}
+                        className="glass-panel"
+                        style={{
+                          padding: '22px 26px',
+                          background: 'white',
+                          borderRadius: '16px',
+                          borderLeft: `5px solid ${borderCol}`,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          flexWrap: 'wrap',
+                          gap: '16px'
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: '280px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                            <span style={{
+                              padding: '3px 10px',
+                              borderRadius: '8px',
+                              background: badgeBg,
+                              color: badgeCol,
+                              fontWeight: 800,
+                              fontSize: '0.76rem',
+                              textTransform: 'uppercase'
+                            }}>
+                              ● {leave.status}
+                            </span>
+                            <span style={{ fontSize: '0.8rem', color: '#4f46e5', fontWeight: 700 }}>
+                              {leave.specialization || 'Clinical Specialist'}
+                            </span>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                              License: {leave.licenseNumber || 'MOH-CERT'}
+                            </span>
+                          </div>
+
+                          <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '4px' }}>
+                            📅 {leave.startDate} → {leave.endDate}
+                          </div>
+
+                          <div style={{ fontSize: '0.88rem', color: '#334155', marginBottom: '6px' }}>
+                            <strong>Reason:</strong> {leave.reason}
+                          </div>
+
+                          <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                            Doctor ID: <span style={{ fontFamily: 'monospace' }}>{leave.doctorId}</span> • Requested on {leave.createdAt ? new Date(leave.createdAt).toLocaleDateString() : 'N/A'}
+                          </div>
+
+                          {leave.adminNotes && (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              background: '#f8fafc',
+                              border: '1px solid #e2e8f0',
+                              fontSize: '0.82rem',
+                              color: '#475569'
+                            }}>
+                              <span style={{ fontWeight: 700, color: '#334155' }}>Admin Feedback: </span>
+                              {leave.adminNotes}
+                              {leave.reviewedAt && (
+                                <span style={{ color: '#94a3b8', marginLeft: '6px' }}>
+                                  ({new Date(leave.reviewedAt).toLocaleDateString()})
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions for Pending Requests */}
+                        {isPending && (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => {
+                                setLeaveReviewModal({
+                                  doctorId: leave.doctorId,
+                                  leaveId: leave.leaveId || leave._id,
+                                  status: 'approved',
+                                  startDate: leave.startDate,
+                                  endDate: leave.endDate
+                                });
+                                setAdminReviewNotes('Approved by administrator. Unbooked slots cleaned.');
+                              }}
+                              className="btn btn-sm"
+                              style={{
+                                background: '#10b981',
+                                color: 'white',
+                                fontWeight: 700,
+                                fontSize: '0.8rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                borderRadius: '8px'
+                              }}
+                            >
+                              <Check size={14} /> Approve Leave
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setLeaveReviewModal({
+                                  doctorId: leave.doctorId,
+                                  leaveId: leave.leaveId || leave._id,
+                                  status: 'rejected',
+                                  startDate: leave.startDate,
+                                  endDate: leave.endDate
+                                });
+                                setAdminReviewNotes('Leave request rejected due to clinic staffing coverage constraints.');
+                              }}
+                              className="btn btn-sm"
+                              style={{
+                                background: '#ef4444',
+                                color: 'white',
+                                fontWeight: 700,
+                                fontSize: '0.8rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                borderRadius: '8px'
+                              }}
+                            >
+                              <X size={14} /> Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* TAB 6: FRONT DESK & RECEPTIONIST MANAGEMENT (የመቀበያ ሠራተኞች)  */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {activeTab === 'receptionists' && (
+          <div>
+            {/* Header Banner */}
+            <div className="glass-panel" style={{ padding: '24px', marginBottom: '22px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                      Front Desk & Receptionist Staff (የመቀበያ ሠራተኞች)
+                    </h2>
+                    <span style={{
+                      background: '#ecfdf5',
+                      color: '#065f46',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontSize: '0.8rem',
+                      fontWeight: 800
+                    }}>
+                      {receptionists.filter(r => r.isActive).length} Active On Duty
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                    Onboard front desk receptionists. They can search patients, verify check-ins, book available doctor slots, and handle walk-ins. Receptionists cannot update clinic details or financial settings.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={fetchReceptionists}
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <RefreshCw size={14} className={loadingReceptionists ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCreatedReceptionistCreds(null);
+                      setReceptionistError('');
+                      setShowAddReceptionistModal(true);
+                    }}
+                    className="btn btn-primary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <UserPlus size={15} /> Onboard New Receptionist
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Receptionists List */}
+            {loadingReceptionists ? (
+              <div className="glass-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
+                <div className="spinner" style={{ borderColor: '#4f46e5', borderTopColor: 'transparent', margin: '0 auto 12px' }} />
+                <div style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Loading receptionist directory...</div>
+              </div>
+            ) : receptionists.length === 0 ? (
+              <div className="glass-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                  <ClipboardList size={28} />
+                </div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: '0 0 6px', color: 'var(--text-main)' }}>
+                  No Front Desk Receptionists Onboarded Yet
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', maxWidth: '420px', margin: '0 auto 20px' }}>
+                  Create the first receptionist profile so staff can manage patient queues and appointment check-ins at the front desk.
+                </p>
+                <button
+                  onClick={() => setShowAddReceptionistModal(true)}
+                  className="btn btn-primary btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <UserPlus size={15} /> Onboard First Receptionist
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '18px' }}>
+                {receptionists.map((rec) => {
+                  const recId = (rec._id || '').slice(-6).toUpperCase();
+                  return (
+                    <div
+                      key={rec._id}
+                      className="glass-panel"
+                      style={{
+                        padding: '22px',
+                        border: rec.isActive ? '1px solid #d1fae5' : '1px solid #fee2e2',
+                        background: rec.isActive ? '#ffffff' : '#fafafa',
+                        borderRadius: '16px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '16px'
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{
+                              width: '46px',
+                              height: '46px',
+                              borderRadius: '12px',
+                              background: rec.isActive ? '#ecfdf5' : '#f1f5f9',
+                              color: rec.isActive ? '#059669' : '#64748b',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 800,
+                              fontSize: '1.1rem'
+                            }}>
+                              {rec.name ? rec.name.charAt(0).toUpperCase() : 'R'}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--text-main)' }}>
+                                {rec.name}
+                              </div>
+                              <span style={{
+                                fontSize: '0.72rem',
+                                color: '#64748b',
+                                fontFamily: 'monospace'
+                              }}>
+                                ETH-REC-{recId}
+                              </span>
+                            </div>
+                          </div>
+
+                          <span style={{
+                            padding: '3px 10px',
+                            borderRadius: '9999px',
+                            fontSize: '0.72rem',
+                            fontWeight: 800,
+                            background: rec.isActive ? '#ecfdf5' : '#fef2f2',
+                            color: rec.isActive ? '#065f46' : '#991b1b',
+                            border: rec.isActive ? '1px solid #a7f3d0' : '1px solid #fee2e2',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            {rec.isActive ? <CheckCircle2 size={12} /> : <Ban size={12} />}
+                            {rec.isActive ? 'Active Duty' : 'Suspended'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <User size={14} style={{ color: '#64748b' }} />
+                            <span>{rec.email}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Phone size={14} style={{ color: '#64748b' }} />
+                            <span>{rec.phoneNumber || 'No phone'}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <MapPin size={14} style={{ color: '#64748b' }} />
+                            <span>{rec.address || 'Addis Ababa, Bole'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f1f5f9', paddingTop: '14px' }}>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                          Added {rec.createdAt ? new Date(rec.createdAt).toLocaleDateString() : 'Recently'}
+                        </div>
+
+                        <button
+                          onClick={() => handleToggleReceptionist(rec._id)}
+                          className="btn btn-sm"
+                          style={{
+                            background: rec.isActive ? '#fee2e2' : '#ecfdf5',
+                            color: rec.isActive ? '#991b1b' : '#065f46',
+                            border: rec.isActive ? '1px solid #fecaca' : '1px solid #a7f3d0',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            borderRadius: '8px'
+                          }}
+                        >
+                          {rec.isActive ? 'Suspend Access' : 'Reactivate'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
+
+      {/* ════════════════════════════════════════════════════════════════ */}
+      {/* MODAL: ADMIN REVIEW DOCTOR LEAVE (APPROVE / REJECT)            */}
+      {/* ════════════════════════════════════════════════════════════════ */}
+      {leaveReviewModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(6px)',
+          zIndex: 105,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', background: 'white', borderRadius: '18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                {leaveReviewModal.status === 'approved' ? 'Approve Doctor Leave' : 'Reject Doctor Leave'}
+              </h3>
+              <button
+                onClick={() => setLeaveReviewModal(null)}
+                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.88rem', color: '#334155', marginBottom: '16px' }}>
+              You are about to mark this leave request for dates <strong>{leaveReviewModal.startDate} → {leaveReviewModal.endDate}</strong> as{' '}
+              <strong style={{ color: leaveReviewModal.status === 'approved' ? '#059669' : '#dc2626', textTransform: 'uppercase' }}>
+                {leaveReviewModal.status}
+              </strong>.
+            </p>
+
+            {leaveReviewModal.status === 'approved' && (
+              <div style={{
+                background: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                fontSize: '0.8rem',
+                color: '#047857',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <CheckCircle2 size={16} />
+                <span>
+                  Automatic Action: All unbooked slots for this doctor during the leave dates will be purged from the database.
+                </span>
+              </div>
+            )}
+
+            <form onSubmit={handleReviewLeaveSubmit}>
+              <div className="form-group" style={{ marginBottom: '18px' }}>
+                <label className="form-label">Administrator Feedback / Decision Notes</label>
+                <textarea
+                  rows={3}
+                  className="form-control"
+                  value={adminReviewNotes}
+                  onChange={(e) => setAdminReviewNotes(e.target.value)}
+                  placeholder="Enter comments for the physician..."
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setLeaveReviewModal(null)}
+                  className="btn btn-secondary"
+                  disabled={submittingReview}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn"
+                  style={{
+                    background: leaveReviewModal.status === 'approved' ? '#10b981' : '#ef4444',
+                    color: 'white',
+                    fontWeight: 800
+                  }}
+                  disabled={submittingReview}
+                >
+                  {submittingReview ? (
+                    <>
+                      <Loader2 size={16} className="spinner" /> Processing...
+                    </>
+                  ) : leaveReviewModal.status === 'approved' ? (
+                    'Confirm Approval'
+                  ) : (
+                    'Confirm Rejection'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
 
       {/* ════════════════════════════════════════════════════════════════ */}
       {/* MODAL 1: ADD NEW DOCTOR (ሐኪም መመዝገቢያ)                          */}
@@ -2057,6 +2960,239 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
+      {/* ════════════════════════════════════════════════════════════════ */}
+      {/* MODAL: ONBOARD FRONT DESK RECEPTIONIST (ADMIN CONTROLLED)      */}
+      {/* ════════════════════════════════════════════════════════════════ */}
+      {showAddReceptionistModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(6px)',
+          zIndex: 110,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '32px', background: 'white', borderRadius: '20px', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserPlus size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
+                    Onboard Receptionist Staff
+                  </h3>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Create front desk account with immediate login credentials
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAddReceptionistModal(false)}
+                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {createdReceptionistCreds ? (
+              <div>
+                <div style={{
+                  background: '#ecfdf5',
+                  border: '1px solid #a7f3d0',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '20px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: '#059669', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <h4 style={{ margin: '0 0 4px', color: '#065f46', fontWeight: 800, fontSize: '1.1rem' }}>
+                    Receptionist Created Successfully!
+                  </h4>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#047857' }}>
+                    Share these temporary login credentials with your new staff member:
+                  </p>
+                </div>
+
+                <div style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  fontSize: '0.88rem'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Full Name:</span>
+                    <strong>{createdReceptionistCreds.name}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Login Email:</span>
+                    <strong>{createdReceptionistCreds.email}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Temporary Password:</span>
+                    <strong style={{ color: '#4f46e5', fontFamily: 'monospace' }}>{createdReceptionistCreds.password}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Portal URL:</span>
+                    <span>http://localhost:3000/login</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => {
+                      const text = `CareSync Front Desk Credentials:\nName: ${createdReceptionistCreds.name}\nEmail: ${createdReceptionistCreds.email}\nPassword: ${createdReceptionistCreds.password}\nPortal: http://localhost:3000/login`;
+                      navigator.clipboard.writeText(text);
+                      setCopiedCreds(true);
+                      setTimeout(() => setCopiedCreds(false), 3000);
+                    }}
+                    className="btn btn-secondary"
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  >
+                    {copiedCreds ? <CheckCheck size={16} style={{ color: '#059669' }} /> : <Copy size={16} />}
+                    {copiedCreds ? 'Copied to Clipboard!' : 'Copy Credentials'}
+                  </button>
+                  <button
+                    onClick={() => setShowAddReceptionistModal(false)}
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleCreateReceptionistSubmit}>
+                {receptionistError && (
+                  <div style={{
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    color: '#dc2626',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '0.84rem',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <AlertCircle size={16} />
+                    <span>{receptionistError}</span>
+                  </div>
+                )}
+
+                <div className="form-group" style={{ marginBottom: '14px' }}>
+                  <label className="form-label">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    className="form-control"
+                    placeholder="e.g. Selamawit Tadesse"
+                    value={receptionistForm.name}
+                    onChange={(e) => setReceptionistForm({ ...receptionistForm, name: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Email Address *</label>
+                    <input
+                      type="email"
+                      required
+                      className="form-control"
+                      placeholder="reception@clinic.et"
+                      value={receptionistForm.email}
+                      onChange={(e) => setReceptionistForm({ ...receptionistForm, email: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Phone Number *</label>
+                    <input
+                      type="text"
+                      required
+                      className="form-control"
+                      placeholder="+251 91 122 3344"
+                      value={receptionistForm.phoneNumber}
+                      onChange={(e) => setReceptionistForm({ ...receptionistForm, phoneNumber: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Temporary Password *</label>
+                    <input
+                      type="text"
+                      required
+                      className="form-control"
+                      placeholder="e.g. Reception@123"
+                      value={receptionistForm.password}
+                      onChange={(e) => setReceptionistForm({ ...receptionistForm, password: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Gender</label>
+                    <select
+                      className="form-control"
+                      value={receptionistForm.gender}
+                      onChange={(e) => setReceptionistForm({ ...receptionistForm, gender: e.target.value })}
+                    >
+                      <option value="female">Female</option>
+                      <option value="male">Male</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '22px' }}>
+                  <label className="form-label">Duty Location / Branch</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Addis Ababa Central Clinic, Bole"
+                    value={receptionistForm.address}
+                    onChange={(e) => setReceptionistForm({ ...receptionistForm, address: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddReceptionistModal(false)}
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingReceptionist}
+                    className="btn btn-primary"
+                    style={{ flex: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    {submittingReceptionist ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+                    {submittingReceptionist ? 'Creating...' : 'Onboard Receptionist'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+

@@ -10,14 +10,15 @@ import {
   getAllAppointmentsAdmin,
   adminCancelAppointmentHandler
 } from '../controllers/appointment.controller.js';
-import { protect, authorizePatient, authorizeDoctor, authorizeAdmin } from '../middleware/auth.js';
+import { protect, authorizePatient, authorizeDoctor, authorizeAdmin, authorizeStaff } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// ── Admin Routes ──────────────────────────────────────────────
-// ⚠️ Admin GET / must come BEFORE patient GET /my-appointments etc.
-router.get('/', protect, authorizeAdmin, getAllAppointmentsAdmin);
-router.patch('/:id/cancel', protect, authorizeAdmin, adminCancelAppointmentHandler);
+// ── Staff (Admin & Front-Desk Receptionist) Routes ─────────────
+// ⚠️ Staff GET / must come BEFORE patient GET /my-appointments etc.
+router.get('/', protect, authorizeStaff, getAllAppointmentsAdmin);
+router.patch('/:id/cancel', protect, authorizeStaff, adminCancelAppointmentHandler);
+
 
 // ── Patient Routes ────────────────────────────────────────────
 router.post('/', protect, authorizePatient, bookAppointment);
