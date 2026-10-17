@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import { clinicApi } from '@/lib/api';
 import {
   Building2,
@@ -43,7 +44,12 @@ import {
   FileText,
   Building,
   Award,
-  Info
+  Info,
+  UploadCloud,
+  Upload,
+  Image as ImageIcon,
+  FileUp,
+  Camera
 } from 'lucide-react';
 
 const formatDateSafe = (dateVal) => {
@@ -89,12 +95,69 @@ const calculateDays = (start, end) => {
   }
 };
 
-export default function AdminClinicManagementPage() {
+function AdminClinicManagementContent() {
   const { user, mounted } = useAuth();
+  const { refreshClinic } = useClinic();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams?.get('tab');
 
   // Navigation tab: 'profile' | 'leaves' | 'holidays' | 'maintenance'
-  const [activeTab, setActiveTab] = useState('profile');
+  const [activeTab, setActiveTab] = useState(
+    tabParam && ['profile', 'leaves', 'holidays', 'maintenance'].includes(tabParam)
+      ? tabParam
+      : 'profile'
+  );
+
+  // Sync state if URL query changes
+  useEffect(() => {
+    if (tabParam && ['profile', 'leaves', 'holidays', 'maintenance'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    } else if (!tabParam) {
+      setActiveTab('profile');
+    }
+  }, [tabParam]);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const t = params.get('tab');
+        if (t && ['profile', 'leaves', 'holidays', 'maintenance'].includes(t)) {
+          setActiveTab(t);
+        } else if (!t) {
+          setActiveTab('profile');
+        }
+      } catch (err) {}
+    };
+
+    const handleTabEvent = (e) => {
+      const t = e.detail?.tab;
+      if (t && ['profile', 'leaves', 'holidays', 'maintenance'].includes(t)) {
+        setActiveTab(t);
+      } else if (!t) {
+        setActiveTab('profile');
+      }
+    };
+
+    syncFromUrl();
+    window.addEventListener('popstate', syncFromUrl);
+    window.addEventListener('app:tab-change', handleTabEvent);
+    return () => {
+      window.removeEventListener('popstate', syncFromUrl);
+      window.removeEventListener('app:tab-change', handleTabEvent);
+    };
+  }, []);
+
+  const handleTabChange = (tabKey) => {
+    setActiveTab(tabKey);
+    router.replace(`/admin/clinic?tab=${tabKey}`, { scroll: false });
+    window.dispatchEvent(
+      new CustomEvent('app:tab-change', {
+        detail: { path: '/admin/clinic', tab: tabKey }
+      })
+    );
+  };
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -158,6 +221,16 @@ export default function AdminClinicManagementPage() {
   const [editClinicForm, setEditClinicForm] = useState(null);
   const [newServiceInput, setNewServiceInput] = useState('');
   const [doctorsCount, setDoctorsCount] = useState(0);
+
+  // Local Device File Upload States for Clinic Media Assets
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
+  const [coverFile, setCoverFile] = useState(null);
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState('');
+  const [showManualUrl, setShowManualUrl] = useState(false);
+
+  const logoInputRef = useRef(null);
+  const coverInputRef = useRef(null);
 
   // 4. Runtime Status & Maintenance
   const [runtimeStatus, setRuntimeStatus] = useState(null);
@@ -363,12 +436,73 @@ export default function AdminClinicManagementPage() {
   // ── 3. CLINIC PROFILE EDIT & UPDATE HANDLERS ─────────────────────
   const handleStartEditing = () => {
     setEditClinicForm(JSON.parse(JSON.stringify(clinicProfile)));
+    if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setLogoFile(null);
+    setLogoPreviewUrl('');
+    setCoverFile(null);
+    setCoverPreviewUrl('');
+    setShowManualUrl(false);
     setIsEditingProfile(true);
   };
 
   const handleCancelEditing = () => {
     setEditClinicForm(JSON.parse(JSON.stringify(clinicProfile)));
+    if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setLogoFile(null);
+    setLogoPreviewUrl('');
+    setCoverFile(null);
+    setCoverPreviewUrl('');
+    setShowManualUrl(false);
     setIsEditingProfile(false);
+  };
+
+  // Local File Upload Handlers (Logo & Cover Banner)
+  const handleLogoFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file (PNG, JPG, WebP, SVG).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Clinic logo image must be smaller than 5 MB.');
+      return;
+    }
+    if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
+    setLogoFile(file);
+    setLogoPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveSelectedLogo = () => {
+    if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
+    setLogoFile(null);
+    setLogoPreviewUrl('');
+    if (logoInputRef.current) logoInputRef.current.value = '';
+  };
+
+  const handleCoverFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file (PNG, JPG, WebP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Clinic cover banner image must be smaller than 5 MB.');
+      return;
+    }
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setCoverFile(file);
+    setCoverPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveSelectedCover = () => {
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setCoverFile(null);
+    setCoverPreviewUrl('');
+    if (coverInputRef.current) coverInputRef.current.value = '';
   };
 
   const handleAddService = (e) => {
@@ -415,37 +549,72 @@ export default function AdminClinicManagementPage() {
     setSavingProfile(true);
     const target = editClinicForm || clinicProfile;
     try {
-      const payload = {
-        name: target.name,
-        description: target.description,
-        phoneNumber: target.phoneNumber,
-        email: target.email,
-        website: target.website,
-        city: target.location?.city,
-        subCity: target.location?.subCity,
-        woreda: target.location?.woreda,
-        fullAddress: target.location?.fullAddress,
-        latitude: target.location?.coordinates?.latitude,
-        longitude: target.location?.coordinates?.longitude,
-        openTime: target.workingHours?.openTime,
-        closeTime: target.workingHours?.closeTime,
-        openDays: target.workingHours?.openDays,
-        isOpenSaturday: target.workingHours?.isOpenSaturday,
-        isOpenSunday: target.workingHours?.isOpenSunday,
-        services: target.services,
-        logo: target.media?.logo,
-        coverImage: target.media?.coverImage
-      };
+      const formData = new FormData();
+      formData.append('name', target.name || '');
+      if (target.description !== undefined) formData.append('description', target.description);
+      formData.append('phoneNumber', target.phoneNumber || '');
+      if (target.email !== undefined) formData.append('email', target.email);
+      if (target.website !== undefined) formData.append('website', target.website);
+      if (target.location?.city) formData.append('city', target.location.city);
+      if (target.location?.subCity !== undefined) formData.append('subCity', target.location.subCity);
+      if (target.location?.woreda !== undefined) formData.append('woreda', target.location.woreda);
+      if (target.location?.fullAddress !== undefined) formData.append('fullAddress', target.location.fullAddress);
+      
+      if (target.location?.coordinates?.latitude !== undefined && target.location?.coordinates?.latitude !== '') {
+        formData.append('latitude', target.location.coordinates.latitude);
+      }
+      if (target.location?.coordinates?.longitude !== undefined && target.location?.coordinates?.longitude !== '') {
+        formData.append('longitude', target.location.coordinates.longitude);
+      }
 
-      const res = await clinicApi.put('/updateClinicProfile', payload);
+      if (target.workingHours?.openTime) formData.append('openTime', target.workingHours.openTime);
+      if (target.workingHours?.closeTime) formData.append('closeTime', target.workingHours.closeTime);
+      formData.append('isOpenSaturday', String(target.workingHours?.isOpenSaturday ?? false));
+      formData.append('isOpenSunday', String(target.workingHours?.isOpenSunday ?? false));
+
+      if (target.workingHours?.openDays && target.workingHours.openDays.length > 0) {
+        formData.append('openDays', JSON.stringify(target.workingHours.openDays));
+      }
+      if (target.services && target.services.length > 0) {
+        formData.append('services', JSON.stringify(target.services));
+      }
+
+      // 🖼️ Binary file uploads from local device (Swagger PUT /api/clinics/updateClinicProfile)
+      if (logoFile) {
+        formData.append('logo', logoFile);
+      } else if (target.media?.logo) {
+        formData.append('logo', target.media.logo);
+      }
+
+      if (coverFile) {
+        formData.append('coverImage', coverFile);
+      } else if (target.media?.coverImage) {
+        formData.append('coverImage', target.media.coverImage);
+      }
+
+      const res = await clinicApi.put('/updateClinicProfile', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
       if (res.data?.success) {
-        setNotification('💾 Clinic operating profile, location & hours successfully saved in database!');
+        setNotification('💾 Clinic operating profile, visual branding & media assets successfully updated!');
+        if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
+        if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+        setLogoFile(null);
+        setLogoPreviewUrl('');
+        setCoverFile(null);
+        setCoverPreviewUrl('');
+        setShowManualUrl(false);
         setIsEditingProfile(false);
-        loadAllData(true);
+        await loadAllData(true);
+        if (refreshClinic) await refreshClinic();
         setTimeout(() => setNotification(''), 5000);
       }
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to update clinic profile.');
+      console.error('Failed to update clinic profile:', err);
+      alert(err.response?.data?.message || err.message || 'Failed to update clinic profile.');
     } finally {
       setSavingProfile(false);
     }
@@ -672,7 +841,7 @@ export default function AdminClinicManagementPage() {
           }}
         >
           <button
-            onClick={() => setActiveTab('profile')}
+            onClick={() => handleTabChange('profile')}
             style={{
               padding: '14px 22px',
               fontWeight: 700,
@@ -695,7 +864,7 @@ export default function AdminClinicManagementPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('leaves')}
+            onClick={() => handleTabChange('leaves')}
             style={{
               padding: '14px 22px',
               fontWeight: 700,
@@ -723,7 +892,7 @@ export default function AdminClinicManagementPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('holidays')}
+            onClick={() => handleTabChange('holidays')}
             style={{
               padding: '14px 22px',
               fontWeight: 700,
@@ -749,7 +918,7 @@ export default function AdminClinicManagementPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('maintenance')}
+            onClick={() => handleTabChange('maintenance')}
             style={{
               padding: '14px 22px',
               fontWeight: 700,
@@ -1748,57 +1917,357 @@ export default function AdminClinicManagementPage() {
                       />
                     </div>
 
-                    {/* Media Assets: Logo & Cover Image */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '18px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px' }}>Clinic Logo Image URL</label>
-                        <input
-                          type="url"
-                          placeholder="https://.../logo.jpg"
-                          value={editClinicForm?.media?.logo || ''}
-                          onChange={(e) => setEditClinicForm({
-                            ...editClinicForm,
-                            media: { ...(editClinicForm?.media || {}), logo: e.target.value }
-                          })}
-                          style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontSize: '0.9rem' }}
-                        />
-                        {editClinicForm?.media?.logo && (
-                          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <img
-                              src={editClinicForm.media.logo}
-                              alt="Logo Preview"
-                              style={{ width: '40px', height: '40px', borderRadius: '8px', objectFit: 'contain', border: '1px solid #e2e8f0' }}
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                            />
-                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Logo Preview</span>
-                          </div>
-                        )}
+                    {/* Media Assets: Local Device Image Uploaders (Logo & Cover Image) */}
+                    <div style={{ marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.88rem', fontWeight: 700, color: '#1e293b' }}>
+                            Clinic Visual Branding & Media
+                          </label>
+                          <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                            Upload image files directly from your computer or phone. Selected files will be stored and synced directly to Cloudinary CDN via the backend.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowManualUrl(!showManualUrl)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#4f46e5',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '4px 8px',
+                            borderRadius: '6px'
+                          }}
+                        >
+                          {showManualUrl ? '▲ Hide manual URL inputs' : '⚙️ Or enter image URLs manually'}
+                        </button>
                       </div>
 
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px' }}>Clinic Cover Image Banner URL</label>
-                        <input
-                          type="url"
-                          placeholder="https://.../cover.jpg"
-                          value={editClinicForm?.media?.coverImage || ''}
-                          onChange={(e) => setEditClinicForm({
-                            ...editClinicForm,
-                            media: { ...(editClinicForm?.media || {}), coverImage: e.target.value }
-                          })}
-                          style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontSize: '0.9rem' }}
-                        />
-                        {editClinicForm?.media?.coverImage && (
-                          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <img
-                              src={editClinicForm.media.coverImage}
-                              alt="Cover Preview"
-                              style={{ width: '80px', height: '40px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                            />
-                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Banner Preview</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+                        
+                        {/* 1. CLINIC LOGO LOCAL UPLOADER */}
+                        <div
+                          style={{
+                            border: logoFile ? '2px solid #86efac' : '2px dashed #cbd5e1',
+                            borderRadius: '16px',
+                            padding: '18px',
+                            background: logoFile ? '#f0fdf4' : '#f8fafc',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4f46e5' }}>
+                                <ImageIcon size={16} />
+                              </div>
+                              <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1e293b' }}>Clinic Logo</span>
+                            </div>
+                            {logoFile ? (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 700, background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '9999px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={12} /> Local File Selected
+                              </span>
+                            ) : editClinicForm?.media?.logo ? (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 600, background: '#e0e7ff', color: '#4338ca', padding: '3px 8px', borderRadius: '9999px' }}>
+                                Active Logo
+                              </span>
+                            ) : null}
                           </div>
-                        )}
+
+                          {/* Logo Preview and Actions */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div
+                              style={{
+                                width: '76px',
+                                height: '76px',
+                                borderRadius: '14px',
+                                background: '#ffffff',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+                                overflow: 'hidden',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0
+                              }}
+                            >
+                              {(logoPreviewUrl || editClinicForm?.media?.logo) ? (
+                                <img
+                                  src={logoPreviewUrl || editClinicForm.media.logo}
+                                  alt="Logo Preview"
+                                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                                />
+                              ) : (
+                                <Building2 size={32} style={{ color: '#94a3b8' }} />
+                              )}
+                            </div>
+
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              {logoFile ? (
+                                <div style={{ marginBottom: '8px' }}>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {logoFile.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.74rem', color: '#16a34a', fontWeight: 600 }}>
+                                    {(logoFile.size / 1024).toFixed(1)} KB • Ready to upload from device
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '8px', lineHeight: 1.4 }}>
+                                  Upload square clinic logo (PNG, JPG, SVG, WebP up to 5MB).
+                                </div>
+                              )}
+
+                              <input
+                                ref={logoInputRef}
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                onChange={handleLogoFileChange}
+                                style={{ display: 'none' }}
+                              />
+
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => logoInputRef.current?.click()}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{
+                                    fontSize: '0.78rem',
+                                    fontWeight: 700,
+                                    borderRadius: '8px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 12px',
+                                    background: '#ffffff'
+                                  }}
+                                >
+                                  <UploadCloud size={14} style={{ color: '#4f46e5' }} />
+                                  {logoFile ? 'Change File' : (editClinicForm?.media?.logo ? 'Upload from Device' : 'Choose File')}
+                                </button>
+
+                                {logoFile && (
+                                  <button
+                                    type="button"
+                                    onClick={handleRemoveSelectedLogo}
+                                    style={{
+                                      fontSize: '0.78rem',
+                                      fontWeight: 600,
+                                      color: '#ef4444',
+                                      background: '#fee2e2',
+                                      border: 'none',
+                                      borderRadius: '8px',
+                                      padding: '6px 10px',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                  >
+                                    <X size={13} /> Remove
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. CLINIC COVER BANNER LOCAL UPLOADER */}
+                        <div
+                          style={{
+                            border: coverFile ? '2px solid #86efac' : '2px dashed #cbd5e1',
+                            borderRadius: '16px',
+                            padding: '18px',
+                            background: coverFile ? '#f0fdf4' : '#f8fafc',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}>
+                                <Camera size={16} />
+                              </div>
+                              <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1e293b' }}>Clinic Cover Banner</span>
+                            </div>
+                            {coverFile ? (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 700, background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '9999px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={12} /> Local File Selected
+                              </span>
+                            ) : editClinicForm?.media?.coverImage ? (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 600, background: '#e0e7ff', color: '#4338ca', padding: '3px 8px', borderRadius: '9999px' }}>
+                                Active Banner
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Cover Banner Preview and Actions */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {(coverPreviewUrl || editClinicForm?.media?.coverImage) ? (
+                              <div
+                                style={{
+                                  width: '100%',
+                                  height: '84px',
+                                  borderRadius: '10px',
+                                  overflow: 'hidden',
+                                  position: 'relative',
+                                  border: '1px solid #e2e8f0',
+                                  boxShadow: '0 4px 10px rgba(0,0,0,0.05)'
+                                }}
+                              >
+                                <img
+                                  src={coverPreviewUrl || editClinicForm.media.coverImage}
+                                  alt="Cover Preview"
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                              </div>
+                            ) : (
+                              <div
+                                style={{
+                                  width: '100%',
+                                  height: '84px',
+                                  borderRadius: '10px',
+                                  background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: 'rgba(255,255,255,0.7)',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600
+                                }}
+                              >
+                                No Banner Image Set
+                              </div>
+                            )}
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                              {coverFile ? (
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {coverFile.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.74rem', color: '#16a34a', fontWeight: 600 }}>
+                                    {(coverFile.size / 1024).toFixed(1)} KB • Ready to upload from device
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.78rem', color: '#64748b', flex: 1, minWidth: '160px' }}>
+                                  Panoramic banner for clinic header (PNG, JPG, WebP up to 5MB).
+                                </div>
+                              )}
+
+                              <input
+                                ref={coverInputRef}
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                onChange={handleCoverFileChange}
+                                style={{ display: 'none' }}
+                              />
+
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => coverInputRef.current?.click()}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{
+                                    fontSize: '0.78rem',
+                                    fontWeight: 700,
+                                    borderRadius: '8px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 12px',
+                                    background: '#ffffff'
+                                  }}
+                                >
+                                  <UploadCloud size={14} style={{ color: '#059669' }} />
+                                  {coverFile ? 'Change File' : (editClinicForm?.media?.coverImage ? 'Upload from Device' : 'Choose File')}
+                                </button>
+
+                                {coverFile && (
+                                  <button
+                                    type="button"
+                                    onClick={handleRemoveSelectedCover}
+                                    style={{
+                                      fontSize: '0.78rem',
+                                      fontWeight: 600,
+                                      color: '#ef4444',
+                                      background: '#fee2e2',
+                                      border: 'none',
+                                      borderRadius: '8px',
+                                      padding: '6px 10px',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                  >
+                                    <X size={13} /> Remove
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
                       </div>
+
+                      {/* Optional Advanced Manual URLs Accordion */}
+                      {showManualUrl && (
+                        <div
+                          style={{
+                            marginTop: '16px',
+                            padding: '16px',
+                            background: '#f1f5f9',
+                            borderRadius: '12px',
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                            gap: '14px'
+                          }}
+                        >
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '4px', color: '#334155' }}>
+                              Direct Logo URL (Cloudinary / HTTPS)
+                            </label>
+                            <input
+                              type="url"
+                              placeholder="https://res.cloudinary.com/..."
+                              value={editClinicForm?.media?.logo || ''}
+                              onChange={(e) => setEditClinicForm({
+                                ...editClinicForm,
+                                media: { ...(editClinicForm?.media || {}), logo: e.target.value }
+                              })}
+                              style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '4px', color: '#334155' }}>
+                              Direct Cover Banner URL (Cloudinary / HTTPS)
+                            </label>
+                            <input
+                              type="url"
+                              placeholder="https://res.cloudinary.com/..."
+                              value={editClinicForm?.media?.coverImage || ''}
+                              onChange={(e) => setEditClinicForm({
+                                ...editClinicForm,
+                                media: { ...(editClinicForm?.media || {}), coverImage: e.target.value }
+                              })}
+                              style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2114,7 +2583,9 @@ export default function AdminClinicManagementPage() {
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 30px', fontWeight: 800, borderRadius: '12px' }}
                     >
                       {savingProfile ? <Loader2 size={16} className="spin-icon" /> : <Check size={16} />}
-                      {savingProfile ? 'Saving Changes...' : 'Save Clinic Profile & Hours'}
+                      {savingProfile 
+                        ? (logoFile || coverFile ? 'Uploading Media & Saving...' : 'Saving Changes...') 
+                        : 'Save Clinic Profile & Media'}
                     </button>
                   </div>
 
@@ -2405,3 +2876,12 @@ export default function AdminClinicManagementPage() {
     </div>
   );
 }
+
+export default function AdminClinicManagementPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading Clinic Console...</div>}>
+      <AdminClinicManagementContent />
+    </Suspense>
+  );
+}
+

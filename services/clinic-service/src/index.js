@@ -69,6 +69,21 @@ async function start() {
     });
   });
 
+  // Centralized Error Handler (e.g. Multer file size limits or format errors)
+  app.use((err, req, res, next) => {
+    console.error('Clinic Service Error:', err);
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'File size too large. Maximum allowed file size is 5 MB.'
+      });
+    }
+    return res.status(err.status || 400).json({
+      success: false,
+      message: err.message || 'An error occurred during request processing.'
+    });
+  });
+
   // Initialize cron scheduler for midnight automatic slot generation
   initSlotCronScheduler();
 

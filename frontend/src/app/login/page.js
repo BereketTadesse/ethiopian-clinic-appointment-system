@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import { Mail, Lock, AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 function LoginForm() {
@@ -13,6 +14,7 @@ function LoginForm() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const { login, updateUserState } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
   const searchParams = useSearchParams();
   const isVerified = searchParams?.get('verified') === 'true';
@@ -158,11 +160,35 @@ function LoginForm() {
     <div style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }} suppressHydrationWarning>
       <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '36px' }} suppressHydrationWarning>
         <div style={{ textAlign: 'center', marginBottom: '28px' }} suppressHydrationWarning>
+          {clinicLogo && (
+            <div
+              style={{
+                width: '60px',
+                height: '60px',
+                margin: '0 auto 12px',
+                borderRadius: '16px',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                padding: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.06)'
+              }}
+              suppressHydrationWarning
+            >
+              <img
+                src={clinicLogo}
+                alt={clinicName}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '12px' }}
+              />
+            </div>
+          )}
           <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }} suppressHydrationWarning>
-            Welcome Back
+            {clinicName}
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '6px' }} suppressHydrationWarning>
-            Access your Ethiopian clinic portal & appointments
+            Sign in to access your clinic portal & medical appointments
           </p>
         </div>
 

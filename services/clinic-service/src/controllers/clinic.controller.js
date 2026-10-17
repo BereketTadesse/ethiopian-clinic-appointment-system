@@ -265,8 +265,12 @@ const updateClinicProfile = async (req, res) => {
     if (subCity !== undefined) clinic.location.subCity = subCity;
     if (woreda !== undefined) clinic.location.woreda = woreda;
     if (fullAddress !== undefined) clinic.location.fullAddress = fullAddress;
-    if (latitude !== undefined) clinic.location.coordinates.latitude = Number(latitude);
-    if (longitude !== undefined) clinic.location.coordinates.longitude = Number(longitude);
+    if (latitude !== undefined && latitude !== '' && !isNaN(Number(latitude))) {
+      clinic.location.coordinates.latitude = Number(latitude);
+    }
+    if (longitude !== undefined && longitude !== '' && !isNaN(Number(longitude))) {
+      clinic.location.coordinates.longitude = Number(longitude);
+    }
 
     // Map Nested Working Hours Sub-documents (handles stringified JSON arrays or comma-separated strings from FormData)
     if (openDays) clinic.workingHours.openDays = parseArrayField(openDays);

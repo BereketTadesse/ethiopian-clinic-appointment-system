@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import { clinicApi } from '@/lib/api';
 import API from '@/lib/api';
 import {
@@ -33,12 +34,68 @@ import {
   CalendarDays
 } from 'lucide-react';
 
-export default function ReceptionDashboardPage() {
+function ReceptionDashboardContent() {
   const { user, mounted } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams?.get('tab');
 
   // Active Main Tab: 'queue' | 'slots' | 'patients'
-  const [activeTab, setActiveTab] = useState('queue');
+  const [activeTab, setActiveTab] = useState(
+    tabParam && ['queue', 'slots', 'patients'].includes(tabParam) ? tabParam : 'queue'
+  );
+
+  // 1. Sync from Next.js searchParams
+  useEffect(() => {
+    if (tabParam && ['queue', 'slots', 'patients'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    } else if (!tabParam) {
+      setActiveTab('queue');
+    }
+  }, [tabParam]);
+
+  // 2. Direct mount, popstate and custom tab-change event sync
+  useEffect(() => {
+    const syncFromUrl = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const t = params.get('tab');
+        if (t && ['queue', 'slots', 'patients'].includes(t)) {
+          setActiveTab(t);
+        } else if (!t) {
+          setActiveTab('queue');
+        }
+      } catch (err) {}
+    };
+
+    const handleTabEvent = (e) => {
+      const t = e.detail?.tab;
+      if (t && ['queue', 'slots', 'patients'].includes(t)) {
+        setActiveTab(t);
+      } else if (!t) {
+        setActiveTab('queue');
+      }
+    };
+
+    syncFromUrl();
+    window.addEventListener('popstate', syncFromUrl);
+    window.addEventListener('app:tab-change', handleTabEvent);
+    return () => {
+      window.removeEventListener('popstate', syncFromUrl);
+      window.removeEventListener('app:tab-change', handleTabEvent);
+    };
+  }, []);
+
+  const handleTabChange = (tabKey) => {
+    setActiveTab(tabKey);
+    router.replace(`/reception/dashboard?tab=${tabKey}`, { scroll: false });
+    window.dispatchEvent(
+      new CustomEvent('app:tab-change', {
+        detail: { path: '/reception/dashboard', tab: tabKey }
+      })
+    );
+  };
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -397,41 +454,66 @@ export default function ReceptionDashboardPage() {
             pointerEvents: 'none'
           }} />
 
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-              <span style={{
-                background: 'rgba(255, 255, 255, 0.2)',
-                color: '#ecfdf5',
-                padding: '3px 12px',
-                borderRadius: '9999px',
-                fontSize: '0.74rem',
-                fontWeight: 800,
-                letterSpacing: '0.5px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px'
-              }}>
-                <ClipboardList size={13} /> FRONT DESK RECEPTION DESK
-              </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap' }}>
+            {clinicLogo && (
+              <div
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '16px',
+                  background: 'white',
+                  border: '2px solid rgba(255, 255, 255, 0.4)',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 8px 20px rgba(0, 0, 0, 0.2)',
+                  flexShrink: 0
+                }}
+              >
+                <img
+                  src={clinicLogo}
+                  alt={clinicName}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '12px' }}
+                />
+              </div>
+            )}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                <span style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  color: '#ecfdf5',
+                  padding: '3px 12px',
+                  borderRadius: '9999px',
+                  fontSize: '0.74rem',
+                  fontWeight: 800,
+                  letterSpacing: '0.5px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}>
+                  <ClipboardList size={13} /> {clinicName} • FRONT DESK
+                </span>
 
-              <span style={{
-                background: '#d1fae5',
-                color: '#065f46',
-                padding: '3px 10px',
-                borderRadius: '9999px',
-                fontSize: '0.74rem',
-                fontWeight: 800
-              }}>
-                ETH-REC-{staffId}
-              </span>
+                <span style={{
+                  background: '#d1fae5',
+                  color: '#065f46',
+                  padding: '3px 10px',
+                  borderRadius: '9999px',
+                  fontSize: '0.74rem',
+                  fontWeight: 800
+                }}>
+                  ETH-REC-{staffId}
+                </span>
+              </div>
+
+              <h1 style={{ fontSize: '1.85rem', fontWeight: 800, margin: 0, letterSpacing: '-0.5px' }}>
+                Welcome back, {staffName}
+              </h1>
+              <p style={{ margin: '6px 0 0', color: '#a7f3d0', fontSize: '0.9rem' }}>
+                Patient reception, queue triage, and live physician slot booking at {clinicName}.
+              </p>
             </div>
-
-            <h1 style={{ fontSize: '1.85rem', fontWeight: 800, margin: 0, letterSpacing: '-0.5px' }}>
-              Welcome back, {staffName}
-            </h1>
-            <p style={{ margin: '6px 0 0', color: '#a7f3d0', fontSize: '0.9rem' }}>
-              Patient reception, queue triage, and live physician slot booking.
-            </p>
           </div>
 
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -507,7 +589,7 @@ export default function ReceptionDashboardPage() {
           overflowX: 'auto'
         }}>
           <button
-            onClick={() => setActiveTab('queue')}
+            onClick={() => handleTabChange('queue')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -539,7 +621,7 @@ export default function ReceptionDashboardPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('slots')}
+            onClick={() => handleTabChange('slots')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -561,7 +643,7 @@ export default function ReceptionDashboardPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('patients')}
+            onClick={() => handleTabChange('patients')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -1299,3 +1381,12 @@ export default function ReceptionDashboardPage() {
     </div>
   );
 }
+
+export default function ReceptionDashboardPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading Front Desk Terminal...</div>}>
+      <ReceptionDashboardContent />
+    </Suspense>
+  );
+}
+

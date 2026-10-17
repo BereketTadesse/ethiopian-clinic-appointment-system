@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import API from '@/lib/api';
 import {
   Calendar,
@@ -37,14 +38,17 @@ import {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
 
-  // If user is a doctor or admin, navigate to their dedicated dashboard
+  // If user is a doctor, admin, or receptionist, navigate to their dedicated dashboard
   useEffect(() => {
     if (user && user.role === 'doctor') {
       router.push('/doctor/dashboard');
     } else if (user && user.role === 'admin') {
       router.push('/admin/dashboard');
+    } else if (user && user.role === 'receptionist') {
+      router.push('/reception/dashboard');
     }
   }, [user, router]);
 
@@ -529,16 +533,41 @@ export default function DashboardPage() {
           flexWrap: 'wrap',
           gap: '16px'
         }}>
-          <div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#4f46e5', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>
-              <Shield size={14} /> Ethiopian Patient Healthcare Portal
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {clinicLogo && (
+              <div
+                style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '14px',
+                  background: 'white',
+                  border: '1px solid #e2e8f0',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.06)',
+                  flexShrink: 0
+                }}
+              >
+                <img
+                  src={clinicLogo}
+                  alt={clinicName}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px' }}
+                />
+              </div>
+            )}
+            <div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#4f46e5', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>
+                <Shield size={14} /> {clinicName} • Patient Portal
+              </div>
+              <h1 style={{ fontSize: '1.85rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px', margin: 0 }}>
+                Welcome, {user?.name || 'Valued Patient'} 👋
+              </h1>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
+                Take clinic cards with integrated 4-step Telebirr/CBE payment, book consultation spots, and view your live queue numbers at {clinicName}.
+              </p>
             </div>
-            <h1 style={{ fontSize: '1.85rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }}>
-              Welcome, {user?.name || 'Valued Patient'} 👋
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
-              Take clinic cards with integrated 4-step Telebirr/CBE payment, book consultation spots, and view your live queue numbers.
-            </p>
           </div>
 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>

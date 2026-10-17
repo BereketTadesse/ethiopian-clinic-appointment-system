@@ -1,7 +1,12 @@
+'use client';
+
 import Link from 'next/link';
 import { Calendar, Shield, Users, ArrowRight } from 'lucide-react';
+import { useClinic } from '@/context/ClinicContext';
 
 export default function HomePage() {
+  const { clinicName, clinicLogo, clinic } = useClinic();
+
   return (
     <div>
       {/* Hero Section */}
@@ -14,16 +19,27 @@ export default function HomePage() {
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: '8px',
-            padding: '6px 14px',
+            gap: '10px',
+            padding: '8px 18px',
             borderRadius: '9999px',
-            background: '#eef2ff',
+            background: '#ffffff',
+            boxShadow: '0 4px 15px rgba(79, 70, 229, 0.08)',
+            border: '1px solid #e0e7ff',
             color: '#4f46e5',
-            fontWeight: 700,
-            fontSize: '0.85rem',
+            fontWeight: 800,
+            fontSize: '0.9rem',
             marginBottom: '24px'
           }}>
-            <Shield size={16} /> Ethiopia’s Modern Clinic Ecosystem
+            {clinicLogo ? (
+              <img
+                src={clinicLogo}
+                alt={clinicName}
+                style={{ width: '22px', height: '22px', borderRadius: '6px', objectFit: 'contain' }}
+              />
+            ) : (
+              <Shield size={16} />
+            )}
+            <span>{clinicName} • Official Patient Appointment Portal</span>
           </div>
 
           <h1 style={{
@@ -34,7 +50,7 @@ export default function HomePage() {
             marginBottom: '20px',
             color: 'var(--text-main)'
           }}>
-            Quality Healthcare & Appointments for Every Ethiopian Family
+            Quality Healthcare & Appointments at {clinicName}
           </h1>
 
           <p style={{
@@ -45,7 +61,7 @@ export default function HomePage() {
             maxWidth: '680px',
             margin: '0 auto 36px'
           }}>
-            Book trusted doctors, securely manage medical records, and schedule care for your children and parents with zero waiting lines.
+            {clinic?.description || 'Book trusted doctors, securely manage medical records, and schedule care for your children and parents with zero waiting lines.'}
           </p>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', flexWrap: 'wrap' }}>

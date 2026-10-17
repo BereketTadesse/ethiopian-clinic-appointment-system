@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import {
   Stethoscope,
   Calendar,
@@ -33,6 +34,7 @@ import {
 
 export default function DoctorDashboardPage() {
   const { user, mounted } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
 
   // Active Filter / Tab
@@ -322,16 +324,41 @@ export default function DoctorDashboardPage() {
           flexWrap: 'wrap',
           gap: '16px'
         }}>
-          <div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#4f46e5', fontWeight: 800, textTransform: 'uppercase', marginBottom: '4px' }}>
-              <Stethoscope size={15} /> Attending Physician Portal • FDRE Ministry of Health
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {clinicLogo && (
+              <div
+                style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '14px',
+                  background: 'white',
+                  border: '1px solid #e2e8f0',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.06)',
+                  flexShrink: 0
+                }}
+              >
+                <img
+                  src={clinicLogo}
+                  alt={clinicName}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px' }}
+                />
+              </div>
+            )}
+            <div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#4f46e5', fontWeight: 800, textTransform: 'uppercase', marginBottom: '4px' }}>
+                <Stethoscope size={15} /> {clinicName} • Attending Physician Portal
+              </div>
+              <h1 style={{ fontSize: '1.9rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px', margin: 0 }}>
+                Welcome, {user?.name || 'Dr. Selamawit Bekele'} 👨‍⚕️
+              </h1>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
+                Review patients registered for your consultation slots at {clinicName}, inspect complete diagnosis history, and document clinical evaluations.
+              </p>
             </div>
-            <h1 style={{ fontSize: '1.9rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }}>
-              Welcome, {user?.name || 'Dr. Selamawit Bekele'} 👨‍⚕️
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
-              Review patients registered for your consultation slots, inspect complete diagnosis history, and document clinical evaluations.
-            </p>
           </div>
 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>

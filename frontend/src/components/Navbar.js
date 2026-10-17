@@ -4,10 +4,12 @@ import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
+import { useClinic } from '../context/ClinicContext';
 import { Activity, User, LogOut, Users, Stethoscope, Building2, ClipboardList } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout, mounted } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
 
   const handleLogout = async () => {
@@ -38,16 +40,53 @@ export default function Navbar() {
   return (
     <header className="navbar-header" suppressHydrationWarning>
       <div className="navbar-container" suppressHydrationWarning>
-        {/* Brand Logo */}
+        {/* Brand Logo & Clinic Name */}
         <Link href={brandLink} className="navbar-brand-link" suppressHydrationWarning>
-          <div className="navbar-logo-icon" suppressHydrationWarning>
-            <Activity size={22} />
-          </div>
-          <div suppressHydrationWarning>
-            <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }}>
-              CareSync <span style={{ color: '#4f46e5' }}>ET</span>
+          {clinicLogo ? (
+            <div
+              style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+              }}
+              suppressHydrationWarning
+            >
+              <img
+                src={clinicLogo}
+                alt={clinicName}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            </div>
+          ) : (
+            <div className="navbar-logo-icon" suppressHydrationWarning>
+              <Activity size={22} />
+            </div>
+          )}
+          <div suppressHydrationWarning style={{ minWidth: 0 }}>
+            <span
+              style={{
+                fontSize: '1.15rem',
+                fontWeight: 800,
+                color: 'var(--text-main)',
+                letterSpacing: '-0.3px',
+                display: 'block',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '260px'
+              }}
+            >
+              {clinicName}
             </span>
-            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600, marginTop: '-3px' }}>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '-2px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
               {subTitle}
             </div>
           </div>
@@ -68,10 +107,8 @@ export default function Navbar() {
                   <Link href="/admin/analytics" className="navbar-nav-item" suppressHydrationWarning>
                     Analytics & Revenue
                   </Link>
-                  <Link href="/profile" className="navbar-nav-item" suppressHydrationWarning style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                    <User size={15} /> Profile
-                  </Link>
                   <span style={{
+
                     fontSize: '0.75rem',
                     fontWeight: 700,
                     padding: '3px 9px',

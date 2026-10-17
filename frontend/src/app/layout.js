@@ -1,9 +1,11 @@
+import { Suspense } from "react";
 import "./globals.css";
 import { AuthProvider } from "../context/AuthContext";
-import Navbar from "../components/Navbar";
+import { ClinicProvider } from "../context/ClinicContext";
+import AppShell from "../components/AppShell";
 
 export const metadata = {
-  title: "CareSync Ethiopia | Clinic & Medical Appointment Portal",
+  title: "Ethiopian Clinic & Medical Appointment Portal",
   description: "Seamless healthcare appointments, family medical profiles, and digital clinic records across Ethiopia.",
 };
 
@@ -20,10 +22,13 @@ export default function RootLayout({ children }) {
       </head>
       <body suppressHydrationWarning>
         <AuthProvider>
-          <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }} suppressHydrationWarning>
-            <Navbar />
-            <main style={{ flex: 1 }} suppressHydrationWarning>{children}</main>
-          </div>
+          <ClinicProvider>
+            <Suspense fallback={null}>
+              <AppShell>
+                {children}
+              </AppShell>
+            </Suspense>
+          </ClinicProvider>
         </AuthProvider>
       </body>
     </html>

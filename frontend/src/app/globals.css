@@ -201,3 +201,117 @@ body {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+/* ========================================================
+   DASHBOARD & ROLE-BASED SIDEBAR LAYOUT
+   ======================================================== */
+.dashboard-shell {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--bg-page);
+  position: relative;
+  width: 100%;
+}
+
+.dashboard-main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+.dashboard-middle-content {
+  flex: 1;
+  width: 100%;
+  position: relative;
+}
+
+.sidebar-aside {
+  width: 270px;
+  height: 100vh;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 95;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-nav-item:hover {
+  background: #f1f5f9 !important;
+  color: var(--color-primary) !important;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 90;
+  transition: opacity 0.2s ease;
+}
+
+@media (min-width: 1024px) {
+  .sidebar-aside {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 270px !important;
+    height: 100vh !important;
+    transform: none !important;
+    z-index: 50 !important;
+    pointer-events: auto !important;
+  }
+  .dashboard-main-area {
+    margin-left: 270px !important;
+    width: calc(100% - 270px) !important;
+    min-width: 0 !important;
+  }
+  .sidebar-mobile-toggle {
+    display: none !important;
+  }
+  .sidebar-close-btn {
+    display: none !important;
+  }
+  .sidebar-backdrop {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .sidebar-aside {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 270px !important;
+    height: 100vh !important;
+    z-index: 100 !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  }
+  .sidebar-aside.sidebar-closed {
+    transform: translateX(-100%) !important;
+    pointer-events: none;
+  }
+  .sidebar-aside.sidebar-open {
+    transform: translateX(0) !important;
+    pointer-events: auto;
+  }
+  .dashboard-main-area {
+    margin-left: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .sidebar-mobile-toggle {
+    display: flex !important;
+  }
+  .sidebar-close-btn {
+    display: flex !important;
+  }
+}
+

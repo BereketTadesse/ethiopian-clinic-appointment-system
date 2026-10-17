@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useClinic } from '@/context/ClinicContext';
 import {
   Users,
   User,
@@ -43,12 +44,86 @@ import {
 } from 'lucide-react';
 import API, { clinicApi } from '@/lib/api';
 
-export default function AdminDashboardPage() {
+function AdminDashboardContent() {
   const { user, mounted } = useAuth();
+  const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams?.get('tab');
 
-  // Active Main Tab: 'taken_slots' | 'open_slots' | 'doctors' | 'treated'
-  const [activeTab, setActiveTab] = useState('taken_slots');
+  const getInitialTab = () => {
+    if (!tabParam) return 'taken_slots';
+    if (['taken_slots', 'open_slots', 'doctors', 'treated', 'doctor_leaves', 'receptionists'].includes(tabParam)) {
+      return tabParam;
+    }
+    if (tabParam === 'slots') return 'taken_slots';
+    if (tabParam === 'leaves') return 'doctor_leaves';
+    return 'taken_slots';
+  };
+
+  // Active Main Tab: 'taken_slots' | 'open_slots' | 'doctors' | 'treated' | 'doctor_leaves' | 'receptionists'
+  const [activeTab, setActiveTab] = useState(getInitialTab);
+
+  useEffect(() => {
+    if (tabParam) {
+      if (['taken_slots', 'open_slots', 'doctors', 'treated', 'doctor_leaves', 'receptionists'].includes(tabParam)) {
+        setActiveTab(tabParam);
+      } else if (tabParam === 'slots') {
+        setActiveTab('taken_slots');
+      } else if (tabParam === 'leaves') {
+        setActiveTab('doctor_leaves');
+      }
+    } else {
+      setActiveTab('taken_slots');
+    }
+  }, [tabParam]);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const t = params.get('tab');
+        if (t) {
+          if (['taken_slots', 'open_slots', 'doctors', 'treated', 'doctor_leaves', 'receptionists'].includes(t)) {
+            setActiveTab(t);
+          } else if (t === 'slots') setActiveTab('taken_slots');
+          else if (t === 'leaves') setActiveTab('doctor_leaves');
+        } else {
+          setActiveTab('taken_slots');
+        }
+      } catch (err) {}
+    };
+
+    const handleTabEvent = (e) => {
+      const t = e.detail?.tab;
+      if (t) {
+        if (['taken_slots', 'open_slots', 'doctors', 'treated', 'doctor_leaves', 'receptionists'].includes(t)) {
+          setActiveTab(t);
+        } else if (t === 'slots') setActiveTab('taken_slots');
+        else if (t === 'leaves') setActiveTab('doctor_leaves');
+      } else {
+        setActiveTab('taken_slots');
+      }
+    };
+
+    syncFromUrl();
+    window.addEventListener('popstate', syncFromUrl);
+    window.addEventListener('app:tab-change', handleTabEvent);
+    return () => {
+      window.removeEventListener('popstate', syncFromUrl);
+      window.removeEventListener('app:tab-change', handleTabEvent);
+    };
+  }, []);
+
+  const handleTabChange = (tabKey) => {
+    setActiveTab(tabKey);
+    router.replace(`/admin/dashboard?tab=${tabKey}`, { scroll: false });
+    window.dispatchEvent(
+      new CustomEvent('app:tab-change', {
+        detail: { path: '/admin/dashboard', tab: tabKey }
+      })
+    );
+  };
 
   // Search & Filter State for Taken Slots
   const [searchPatient, setSearchPatient] = useState('');
@@ -818,35 +893,60 @@ export default function AdminDashboardPage() {
           justifyContent: 'space-between',
           gap: '20px'
         }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-              <span style={{
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                padding: '4px 12px',
-                borderRadius: '9999px',
-                fontSize: '0.8rem',
-                fontWeight: 700,
-                letterSpacing: '0.5px'
-              }}>
-                👑 CLINIC ADMIN & RECEPTION DESK
-              </span>
-              <span style={{
-                background: '#10b981',
-                padding: '4px 10px',
-                borderRadius: '9999px',
-                fontSize: '0.75rem',
-                fontWeight: 700
-              }}>
-                LIVE SYNC
-              </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            {clinicLogo && (
+              <div
+                style={{
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '16px',
+                  background: 'white',
+                  border: '2px solid rgba(255, 255, 255, 0.4)',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 8px 20px rgba(0, 0, 0, 0.2)',
+                  flexShrink: 0
+                }}
+              >
+                <img
+                  src={clinicLogo}
+                  alt={clinicName}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '12px' }}
+                />
+              </div>
+            )}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <span style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  padding: '4px 12px',
+                  borderRadius: '9999px',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.5px'
+                }}>
+                  👑 CLINIC ADMIN & RECEPTION DESK
+                </span>
+                <span style={{
+                  background: '#10b981',
+                  padding: '4px 10px',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700
+                }}>
+                  LIVE SYNC
+                </span>
+              </div>
+              <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: '0 0 6px', letterSpacing: '-0.5px' }}>
+                {clinicName} Operations & Slot Management
+              </h1>
+              <p style={{ margin: 0, opacity: 0.85, fontSize: '0.95rem' }}>
+                Manage taken & open slots, assign walk-in patients, onboard physicians, and monitor clinical volume.
+              </p>
             </div>
-            <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: '0 0 6px', letterSpacing: '-0.5px' }}>
-              Bole Branch Operations & Slot Management
-            </h1>
-            <p style={{ margin: 0, opacity: 0.85, fontSize: '0.95rem' }}>
-              Manage taken & open slots, assign walk-in patients, onboard physicians, and monitor clinical volume.
-            </p>
           </div>
 
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -1121,7 +1221,7 @@ export default function AdminDashboardPage() {
           overflowX: 'auto'
         }}>
           <button
-            onClick={() => setActiveTab('taken_slots')}
+            onClick={() => handleTabChange('taken_slots')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -1143,7 +1243,7 @@ export default function AdminDashboardPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('open_slots')}
+            onClick={() => handleTabChange('open_slots')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -1166,7 +1266,7 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => {
-              setActiveTab('doctors');
+              handleTabChange('doctors');
               fetchDoctors();
             }}
             style={{
@@ -1190,7 +1290,7 @@ export default function AdminDashboardPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab('treated')}
+            onClick={() => handleTabChange('treated')}
             style={{
               padding: '12px 20px',
               fontWeight: 700,
@@ -1213,7 +1313,7 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => {
-              setActiveTab('doctor_leaves');
+              handleTabChange('doctor_leaves');
               fetchAdminLeaves();
             }}
             style={{
@@ -1250,7 +1350,7 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => {
-              setActiveTab('receptionists');
+              handleTabChange('receptionists');
               fetchReceptionists();
             }}
             style={{
@@ -3195,4 +3295,13 @@ export default function AdminDashboardPage() {
     </div>
   );
 }
+
+export default function AdminDashboardPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading Operations Terminal...</div>}>
+      <AdminDashboardContent />
+    </Suspense>
+  );
+}
+
 
