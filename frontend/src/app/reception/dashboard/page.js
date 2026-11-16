@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
-import { clinicApi } from '@/lib/api';
+import { clinicApi, appointmentApi } from '@/lib/api';
 import API from '@/lib/api';
 import {
   ClipboardList,
@@ -278,6 +278,52 @@ function ReceptionDashboardContent() {
     }
   };
 
+  // Live Queue Fetcher
+  const fetchLiveQueue = async (currentDoctors = doctors) => {
+    try {
+      const res = await appointmentApi.get('/appointments');
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        const docList = currentDoctors && currentDoctors.length > 0 ? currentDoctors : doctors;
+        const mapped = res.data.data.map(apt => {
+          const matchedDoc = docList.find(d => d.id === apt.doctorId);
+          const timeStr = (apt.startTime && apt.endTime)
+            ? `${apt.startTime} - ${apt.endTime}`
+            : (apt.startTime || 'Scheduled');
+          return {
+            id: apt._id || apt.id,
+            slotId: apt.slotId,
+            slotTime: timeStr,
+            date: apt.date || 'Today',
+            patientName: apt.patientName || 'Registered Patient',
+            gender: apt.gender || 'female',
+            age: apt.age || 28,
+            phoneNumber: apt.phoneNumber || '+251 91 000 0000',
+            cardNumber: apt.cardNumber || 'CLN-CARD',
+            nationalId: apt.nationalId || 'ET-FAYDA',
+            doctorId: apt.doctorId,
+            doctorName: matchedDoc?.name || apt.doctorName || `Physician (${(apt.doctorId || '').slice(-4)})`,
+            specialty: matchedDoc?.specialty || apt.specialty || 'General Practice',
+            chiefComplaint: apt.reasonForVisit || apt.chiefComplaint || 'Consultation request.',
+            status: apt.status || 'scheduled',
+            feePaid: apt.feePaid || 500,
+            paymentMethod: apt.paymentMethod || 'Telebirr',
+            bookedAt: apt.createdAt ? new Date(apt.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Earlier',
+            checkedInAt: apt.checkedInAt || null,
+            queueNumber: apt.queueNumber || 1,
+            doctorNotes: apt.doctorNotes,
+            prescription: apt.prescription,
+            cancelReason: apt.cancelReason
+          };
+        });
+        if (mapped.length > 0) {
+          setQueue(mapped);
+        }
+      }
+    } catch (err) {
+      console.warn('Appointments queue fetch fallback:', err.message);
+    }
+  };
+
   const fetchDoctorRoster = async () => {
     setLoadingDoctors(true);
     try {
@@ -301,6 +347,43 @@ function ReceptionDashboardContent() {
         if (mapped.length > 0 && !selectedDoctorForSlots) {
           setSelectedDoctorForSlots(mapped[0].id);
         }
+
+        // Fetch live queue with the mapped doctors
+        fetchLiveQueue(mapped);
+
+        // Fetch live available slots for today across all doctors
+        const todayIso = new Date().toISOString().split('T')[0];
+        try {
+          const slotResults = await Promise.allSettled(
+            mapped.map(doc => clinicApi.get(`/${doc.id}/slots?date=${todayIso}`))
+          );
+          const liveSlots = [];
+          slotResults.forEach((result, idx) => {
+            if (result.status === 'fulfilled') {
+              const slots = result.value?.data?.data || result.value?.data?.slots || [];
+              const doc = mapped[idx];
+              if (Array.isArray(slots)) {
+                slots.filter(s => s.status === 'available').forEach(s => {
+                  liveSlots.push({
+                    id: s._id || s.id,
+                    time: `${s.startTime} - ${s.endTime}`,
+                    startTime: s.startTime,
+                    endTime: s.endTime,
+                    doctorId: doc.id,
+                    doctorName: doc.name,
+                    specialty: doc.specialty,
+                    room: doc.room
+                  });
+                });
+              }
+            }
+          });
+          if (liveSlots.length > 0) {
+            setAvailableSlots(liveSlots);
+          }
+        } catch (sErr) {
+          console.warn('Slots fetch fallback:', sErr.message);
+        }
       }
     } catch (e) {
       console.warn('Doctors roster fallback');
@@ -310,6 +393,7 @@ function ReceptionDashboardContent() {
       ];
       setDoctors(fallbackDocs);
       setSelectedDoctorForSlots('doc-101');
+      fetchLiveQueue(fallbackDocs);
     } finally {
       setLoadingDoctors(false);
     }
@@ -319,6 +403,7 @@ function ReceptionDashboardContent() {
     if (mounted) {
       fetchClinicOverview();
       fetchDoctorRoster();
+      fetchLiveQueue();
     }
   }, [mounted]);
 
@@ -335,65 +420,128 @@ function ReceptionDashboardContent() {
     setTimeout(() => setNotification(''), 4000);
   };
 
-  // Submit Cancellation
-  const handleCancelAppointment = () => {
+  // Submit Cancellation (Live API call releases slot in clinic-service)
+  const handleCancelAppointment = async () => {
     if (!showCancelModal) return;
-    setQueue(prev => prev.map(item => {
-      if (item.id === showCancelModal.id) {
-        return { ...item, status: 'cancelled', cancelReason: cancelReason || 'Patient requested walk-out cancellation' };
-      }
-      return item;
-    }));
-    setShowCancelModal(null);
-    setCancelReason('');
-    setNotification('⚠️ Appointment cancelled and slot released back to inventory.');
-    setTimeout(() => setNotification(''), 4000);
+    try {
+      await appointmentApi.patch(`/appointments/${showCancelModal.id}/cancel`, {
+        cancelReason: cancelReason || 'Front desk cancelled on patient request'
+      });
+      setQueue(prev => prev.map(item => {
+        if (item.id === showCancelModal.id) {
+          return { ...item, status: 'cancelled', cancelReason: cancelReason || 'Cancelled by Front Desk' };
+        }
+        return item;
+      }));
+      setNotification('⚠️ Appointment cancelled and slot released back to inventory.');
+    } catch (err) {
+      console.warn('Cancellation API call fallback:', err.message);
+      setQueue(prev => prev.map(item => {
+        if (item.id === showCancelModal.id) {
+          return { ...item, status: 'cancelled', cancelReason: cancelReason || 'Cancelled by Front Desk' };
+        }
+        return item;
+      }));
+      setNotification('⚠️ Appointment marked as cancelled.');
+    } finally {
+      setShowCancelModal(null);
+      setCancelReason('');
+      setTimeout(() => setNotification(''), 4000);
+    }
   };
 
-  // Walk-in Slot Booking Submit
-  const handleWalkinBookingSubmit = (e) => {
+  // Walk-in Slot Booking Submit (Live API call allocates appointment and locks slot)
+  const handleWalkinBookingSubmit = async (e) => {
     e.preventDefault();
     if (!selectedSlotForBooking) return;
 
-    const newApt = {
-      id: `apt-${Date.now().toString().slice(-4)}`,
-      slotTime: selectedSlotForBooking.time,
-      date: 'Today, Oct 17',
-      patientName: walkinForm.patientName.trim(),
-      gender: walkinForm.gender,
-      age: parseInt(walkinForm.age, 10) || 30,
-      phoneNumber: walkinForm.phoneNumber.trim(),
-      cardNumber: `CLN-2026-${Math.floor(10000 + Math.random() * 90000)}`,
-      nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 90000)}`,
+    const todayIso = new Date().toISOString().split('T')[0];
+    const payload = {
       doctorId: selectedSlotForBooking.doctorId,
-      doctorName: selectedSlotForBooking.doctorName,
-      specialty: selectedSlotForBooking.specialty,
-      chiefComplaint: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.',
-      status: 'checked_in', // walk-ins are physically present, so checked in immediately
-      feePaid: walkinForm.feeAmount,
-      paymentMethod: walkinForm.paymentMethod,
-      bookedAt: 'Just Now (Walk-in Desk)',
-      checkedInAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      slotId: selectedSlotForBooking.id,
+      date: todayIso,
+      patientName: walkinForm.patientName.trim(),
+      forPerson: 'Self',
+      reasonForVisit: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.'
     };
 
-    setQueue(prev => [newApt, ...prev]);
-    setAvailableSlots(prev => prev.filter(s => s.id !== selectedSlotForBooking.id));
+    try {
+      const res = await appointmentApi.post('/appointments', payload);
+      const created = res.data?.data || {};
 
-    setShowWalkinModal(false);
-    setSelectedSlotForBooking(null);
-    setWalkinForm({
-      patientName: '',
-      phoneNumber: '+251 9',
-      gender: 'female',
-      age: '28',
-      chiefComplaint: '',
-      paymentMethod: 'Cash',
-      feeAmount: 500
-    });
+      const newApt = {
+        id: created._id || `apt-${Date.now().toString().slice(-4)}`,
+        slotId: selectedSlotForBooking.id,
+        slotTime: selectedSlotForBooking.time,
+        date: 'Today',
+        patientName: walkinForm.patientName.trim(),
+        gender: walkinForm.gender,
+        age: parseInt(walkinForm.age, 10) || 30,
+        phoneNumber: walkinForm.phoneNumber.trim(),
+        cardNumber: created.cardNumber || `CLN-2026-${Math.floor(10000 + Math.random() * 90000)}`,
+        nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 90000)}`,
+        doctorId: selectedSlotForBooking.doctorId,
+        doctorName: selectedSlotForBooking.doctorName,
+        specialty: selectedSlotForBooking.specialty,
+        chiefComplaint: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.',
+        status: 'checked_in', // walk-ins are physically present at front desk
+        feePaid: walkinForm.feeAmount,
+        paymentMethod: walkinForm.paymentMethod,
+        bookedAt: 'Just Now (Walk-in Desk)',
+        checkedInAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        queueNumber: created.queueNumber || 1
+      };
 
-    setNotification(`🎉 Walk-in patient ${newApt.patientName} booked with ${newApt.doctorName} for ${newApt.slotTime}!`);
-    setTimeout(() => setNotification(''), 5000);
+      setQueue(prev => [newApt, ...prev]);
+      setAvailableSlots(prev => prev.filter(s => s.id !== selectedSlotForBooking.id));
+
+      setShowWalkinModal(false);
+      setSelectedSlotForBooking(null);
+      setWalkinForm({
+        patientName: '',
+        phoneNumber: '+251 9',
+        gender: 'female',
+        age: '28',
+        chiefComplaint: '',
+        paymentMethod: 'Cash',
+        feeAmount: 500
+      });
+
+      setNotification(`🎉 Walk-in patient ${newApt.patientName} booked with ${newApt.doctorName} (Queue #${created.queueNumber || 1})!`);
+      setTimeout(() => setNotification(''), 5000);
+    } catch (err) {
+      console.error('Walk-in booking error:', err);
+      // Fallback local addition if offline
+      const newApt = {
+        id: `apt-${Date.now().toString().slice(-4)}`,
+        slotId: selectedSlotForBooking.id,
+        slotTime: selectedSlotForBooking.time,
+        date: 'Today',
+        patientName: walkinForm.patientName.trim(),
+        gender: walkinForm.gender,
+        age: parseInt(walkinForm.age, 10) || 30,
+        phoneNumber: walkinForm.phoneNumber.trim(),
+        cardNumber: `CLN-2026-${Math.floor(10000 + Math.random() * 90000)}`,
+        nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 90000)}`,
+        doctorId: selectedSlotForBooking.doctorId,
+        doctorName: selectedSlotForBooking.doctorName,
+        specialty: selectedSlotForBooking.specialty,
+        chiefComplaint: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.',
+        status: 'checked_in',
+        feePaid: walkinForm.feeAmount,
+        paymentMethod: walkinForm.paymentMethod,
+        bookedAt: 'Just Now (Walk-in Desk)',
+        checkedInAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      };
+      setQueue(prev => [newApt, ...prev]);
+      setAvailableSlots(prev => prev.filter(s => s.id !== selectedSlotForBooking.id));
+      setShowWalkinModal(false);
+      setSelectedSlotForBooking(null);
+      setNotification(`⚠️ Saved walk-in locally: ${newApt.patientName} (${err.response?.data?.message || err.message})`);
+      setTimeout(() => setNotification(''), 5000);
+    }
   };
+
 
   // Filter queue
   const filteredQueue = queue.filter(item => {

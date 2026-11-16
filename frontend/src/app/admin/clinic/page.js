@@ -347,14 +347,17 @@ function AdminClinicManagementContent() {
     try {
       const res = await clinicApi.patch(`/admin/doctor-leaves/${doctorId}/${leaveId}`, {
         status,
-        adminNotes: adminNotes.trim() || (status === 'approved' ? 'Approved by administration' : 'Rejected by administration')
+        adminNotes: adminNotes.trim() || (status === 'approved' ? 'Approved by administration' : status === 'terminated' ? 'Terminated early by administration' : 'Rejected by administration')
       });
 
       if (res.data?.success) {
         const removed = res.data.data?.unbookedSlotsRemoved || 0;
         const notice = res.data.data?.bookedAppointmentsNotice || '';
+        const regCount = res.data.data?.regeneratedDatesCount || 0;
         const msg = status === 'approved'
           ? `🎉 Leave request approved! Automatically removed ${removed} unbooked slot(s). ${notice}`
+          : status === 'terminated'
+          ? `🛑 Leave terminated early! Schedule restored and ${regCount} day(s) of slots regenerated.`
           : `❌ Leave request rejected.`;
         setNotification(msg);
         setReviewModal(null);
@@ -1153,6 +1156,35 @@ function AdminClinicManagementContent() {
                             }}
                           >
                             <ThumbsDown size={14} /> Reject
+                          </button>
+                        </div>
+                      ) : l.status === 'approved' ? (
+                        <div style={{ marginTop: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                          <button
+                            onClick={() => {
+                              setReviewModal({
+                                doctorId: l.doctorId,
+                                leaveId: l.leaveId,
+                                status: 'terminated',
+                                doctorDetails: l
+                              });
+                              setAdminNotes('Doctor returned to duty early. Terminating approved leave.');
+                            }}
+                            className="btn btn-sm"
+                            style={{
+                              background: '#fee2e2',
+                              color: '#b91c1c',
+                              border: '1px solid #fecaca',
+                              fontWeight: 700,
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              width: '100%'
+                            }}
+                          >
+                            <CalendarOff size={14} /> Terminate Leave Early
                           </button>
                         </div>
                       ) : (
@@ -2695,7 +2727,11 @@ function AdminClinicManagementContent() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>
-                {reviewModal.status === 'approved' ? 'Approve Doctor Leave' : 'Reject Doctor Leave'}
+                {reviewModal.status === 'approved' 
+                  ? 'Approve Doctor Leave' 
+                  : reviewModal.status === 'terminated'
+                  ? 'Terminate Approved Leave Early'
+                  : 'Reject Doctor Leave'}
               </h3>
               <button
                 onClick={() => setReviewModal(null)}
@@ -2723,6 +2759,12 @@ function AdminClinicManagementContent() {
               </div>
             )}
 
+            {reviewModal.status === 'terminated' && (
+              <div style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '12px 14px', borderRadius: '10px', fontSize: '0.82rem', marginBottom: '18px', lineHeight: 1.4 }}>
+                ⚠️ <strong>Automatic Slot Restoration:</strong> Terminating this approved leave will immediately restore the doctor's duty schedule and automatically regenerate consultation slots in MongoDB for the remainder of this period.
+              </div>
+            )}
+
             <form onSubmit={handleReviewLeaveSubmit}>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px' }}>
@@ -2735,6 +2777,8 @@ function AdminClinicManagementContent() {
                   placeholder={
                     reviewModal.status === 'approved'
                       ? 'e.g., Approved. On-call coverage arranged.'
+                      : reviewModal.status === 'terminated'
+                      ? 'e.g., Doctor returned to duty early. Terminating leave and regenerating slots.'
                       : 'e.g., Cannot approve due to peak patient load on these dates.'
                   }
                   style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontSize: '0.9rem' }}
@@ -2755,12 +2799,18 @@ function AdminClinicManagementContent() {
                   disabled={submittingReview}
                   className="btn"
                   style={{
-                    background: reviewModal.status === 'approved' ? '#10b981' : '#ef4444',
+                    background: reviewModal.status === 'approved' ? '#10b981' : '#dc2626',
                     color: 'white',
                     fontWeight: 700
                   }}
                 >
-                  {submittingReview ? 'Processing...' : reviewModal.status === 'approved' ? 'Confirm Approval' : 'Confirm Rejection'}
+                  {submittingReview 
+                    ? 'Processing...' 
+                    : reviewModal.status === 'approved' 
+                    ? 'Confirm Approval' 
+                    : reviewModal.status === 'terminated'
+                    ? 'Confirm Termination & Restore Slots'
+                    : 'Confirm Rejection'}
                 </button>
               </div>
             </form>

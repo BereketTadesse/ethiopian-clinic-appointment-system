@@ -88,19 +88,44 @@ const findCardByCardNumber = async (cardNumber, incomingToken) => {
 };
 const updateCardBackground = async (patientId, updateData, incomingToken) => {
   try {
-    const profilePayload = {
-      bloodType: updateData.bloodType,
-      allergies: updateData.allergies,
-      chronicConditions: updateData.chronicConditions,
-      currentMedications: updateData.currentMedications,
-      emergencyContactName: updateData.emergencyContactName,
-      emergencyContactPhone: updateData.emergencyContactPhone,
-      emergencyContactRelationship: updateData.emergencyContactRelationship
-    };
+    // Fields stored on the local card (flat shape). Drop anything not provided so
+    // a partial update never overwrites existing values with undefined.
+    const cardFields = Object.fromEntries(
+      Object.entries({
+        bloodType: updateData.bloodType,
+        allergies: updateData.allergies,
+        chronicConditions: updateData.chronicConditions,
+        currentMedications: updateData.currentMedications,
+        emergencyContactName: updateData.emergencyContactName,
+        emergencyContactPhone: updateData.emergencyContactPhone,
+        emergencyContactRelationship: updateData.emergencyContactRelationship
+      }).filter(([, value]) => value !== undefined)
+    );
+
+    // Map to the user-service PatientProfile shape (nested emergencyContact).
+    // chronicConditions / currentMedications have no matching field there, so they live on the card only.
+    const profilePayload = {};
+    if (cardFields.bloodType !== undefined) profilePayload.bloodType = cardFields.bloodType;
+    if (cardFields.allergies !== undefined) profilePayload.allergies = cardFields.allergies;
+    const touchesEmergencyContact = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelationship']
+      .some((key) => key in cardFields);
+    if (touchesEmergencyContact) {
+      // user-service replaces the whole emergencyContact object, so fill unchanged parts
+      // from the existing card to avoid wiping them on a partial update.
+      const existingCard = await PatientCard.findOne({ patientId, isActive: true }).lean();
+      const pick = (key) => (key in cardFields ? cardFields[key] : existingCard?.[key]);
+      profilePayload.emergencyContact = Object.fromEntries(
+        Object.entries({
+          name: pick('emergencyContactName'),
+          phoneNumber: pick('emergencyContactPhone'),
+          relationship: pick('emergencyContactRelationship')
+        }).filter(([, value]) => value !== undefined && value !== null)
+      );
+    }
 
     // Forward the update command directly over the microservice boundary
     const userServiceResponse = await axios.put(
-      `${USER_SERVICE_URL}/api/users/profile/update-profile`, 
+      `${USER_SERVICE_URL}/api/users/update-profile`,
       profilePayload,
       {
         headers: {
@@ -116,7 +141,7 @@ const updateCardBackground = async (patientId, updateData, incomingToken) => {
       // Mirror the updates inside our local copy to maintain speed optimization caches
       return await PatientCard.findOneAndUpdate(
         { patientId, isActive: true },
-        { $set: profilePayload },
+        { $set: cardFields },
         { new: true }
       );
     }

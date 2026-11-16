@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
@@ -8,9 +8,14 @@ import { useClinic } from '../context/ClinicContext';
 import { Activity, User, LogOut, Users, Stethoscope, Building2, ClipboardList } from 'lucide-react';
 
 export default function Navbar() {
-  const { user, logout, mounted } = useAuth();
+  const { user, logout } = useAuth();
   const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -94,7 +99,7 @@ export default function Navbar() {
 
         {/* Navigation Links */}
         <nav className="navbar-nav-links" suppressHydrationWarning>
-          {mounted && user ? (
+          {isMounted && user ? (
             <>
               {isAdmin ? (
                 <>

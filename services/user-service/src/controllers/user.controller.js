@@ -20,8 +20,21 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const getJwtAccessSecret = () => process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'care-sync-ethiopia-fallback-access-secret-2026';
-const getJwtRefreshSecret = () => process.env.JWT_REFRESH_SECRET || process.env.REFRESH_TOKEN_SECRET || 'care-sync-ethiopia-fallback-refresh-secret-2026';
+const getJwtAccessSecret = () => {
+  const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT access secret is not configured.');
+  }
+  return secret;
+};
+
+const getJwtRefreshSecret = () => {
+  const secret = process.env.JWT_REFRESH_SECRET || process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT refresh secret is not configured.');
+  }
+  return secret;
+};
 const getJwtAccessExpiresIn = () => process.env.JWT_ACCESS_EXPIRES_IN || '15m';
 const getJwtRefreshExpiresIn = () => process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 
@@ -30,7 +43,9 @@ const createUser = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { name, email, phoneNumber, address, password, role, gender } = req.body;
+    const { name, email, phoneNumber, address, password, gender } = req.body;
+    // Never trust a client-supplied role on public signup — always create a patient.
+    const role = 'patient';
 
     if (!name || !email || !phoneNumber || !address || !password || !gender) {
       await session.abortTransaction();
@@ -1463,6 +1478,85 @@ const createReceptionist = async (req, res) => {
 };
 
 /**
+ * @desc    Admin creates a doctor: login account here + clinical profile in clinic-service.
+ *          This is the ONLY way a doctor account can be created (public signup is patient-only).
+ *          If the clinic-service step fails, the new user account is deleted again.
+ * @route   POST /api/users/admin/doctor
+ * @access  Private (Admin Only)
+ */
+const createDoctor = async (req, res) => {
+  const {
+    name, email, phoneNumber, password, gender, address,
+    specialization, licenseNumber, yearsOfExperience, bio,
+    availableDays, startTime, endTime, breakStart, breakEnd
+  } = req.body;
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const normalizedPhone = phoneNumber.trim();
+
+  const existing = await User.findOne({ $or: [{ email: normalizedEmail }, { phoneNumber: normalizedPhone }] });
+  if (existing) {
+    return res.status(400).json({
+      success: false,
+      message: existing.email === normalizedEmail
+        ? 'An account with this email address already exists.'
+        : 'An account with this phone number already exists.'
+    });
+  }
+
+  let doctorUser;
+  try {
+    const hashedPassword = await bcrypt.hash(password, await bcrypt.genSalt(10));
+    doctorUser = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      phoneNumber: normalizedPhone,
+      password: hashedPassword,
+      gender: gender || 'other',
+      address: address ? address.trim() : 'Addis Ababa, Ethiopia',
+      role: 'doctor',
+      isVerified: true, // Created directly by the admin: pre-verified
+      isActive: true
+    });
+  } catch (error) {
+    console.error(`❌ Create Doctor (user account) Error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Failed to create doctor account.' });
+  }
+
+  // Step 2: create the clinical profile in clinic-service, forwarding the admin's own token.
+  try {
+    const clinicResponse = await axios.post(
+      `${CLINIC_SERVICE_URL}/api/clinics/createDoctorProfile`,
+      {
+        userId: doctorUser._id.toString(),
+        specialization, licenseNumber, yearsOfExperience, bio,
+        availableDays, startTime, endTime, breakStart, breakEnd
+      },
+      { headers: { Authorization: req.headers.authorization } }
+    );
+
+    const safeDoctor = await User.findById(doctorUser._id).select('-password');
+    return res.status(201).json({
+      success: true,
+      message: 'Doctor account and clinical profile created. They can log in immediately.',
+      data: { user: safeDoctor, doctorProfile: clinicResponse.data?.data }
+    });
+  } catch (error) {
+    // Roll back so we never leave a doctor login without a clinic profile.
+    await User.findByIdAndDelete(doctorUser._id).catch((rollbackErr) =>
+      console.error(`❌ Rollback failed for doctor user ${doctorUser._id}: ${rollbackErr.message}`)
+    );
+    const status = error.response?.status;
+    const clinicMessage = error.response?.data?.message;
+    console.error(`❌ Create Doctor (clinic profile) Error: ${clinicMessage || error.message}`);
+    return res.status(status && status < 500 ? status : 502).json({
+      success: false,
+      message: clinicMessage || 'Could not create the doctor clinic profile. Clinic service may be unavailable.'
+    });
+  }
+};
+
+/**
  * @desc    Admin lists all clinic receptionists
  * @route   GET /api/users/admin/receptionists
  * @access  Private (Admin Only)
@@ -1522,6 +1616,6 @@ export {
   getPublicDoctorAccountById, requestEmailUpdate, confirmEmailUpdate, deleteMe, getUsers, adminUpdateUserStatus,
   createFamilyMember, updateFamilyMember, deleteFamilyMember, getAllFamilyMembers, getOneFamilyMember,
   createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-  createReceptionist, getReceptionists, toggleReceptionistStatus
+  createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor
 };
 

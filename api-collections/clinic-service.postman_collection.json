@@ -1,0 +1,1180 @@
+{
+  "info": {
+    "name": "Clinic - Clinic Service",
+    "description": "Clinic Service (port 3002). Clinic profile, doctors, leaves, holidays, 40-minute slots.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0. Login (run first)",
+      "description": "Run one of these first. The token is stored in the collection variable {{token}} and used by every request.",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@clinic.et\",\n  \"password\": \"Admin@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Doctor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"doctor.abebe@clinic.et\",\n  \"password\": \"Doctor@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient.almaz@gmail.com\",\n  \"password\": \"Patient@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Clinic Profile",
+      "description": "",
+      "item": [
+        {
+          "name": "Get clinic profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": []
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Clinic open status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/status",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "status"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Create clinic profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/createClinicProfile?overwrite=false",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "createClinicProfile"
+              ],
+              "query": [
+                {
+                  "key": "overwrite",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Admin. Also available as POST / . Accepts multipart with logo/coverImage too.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"CareSync Ethiopia Clinic\",\n  \"description\": \"General outpatient clinic\",\n  \"phoneNumber\": \"0116000000\",\n  \"email\": \"info@clinic.et\",\n  \"website\": \"https://clinic.et\",\n  \"city\": \"Addis Ababa\",\n  \"subCity\": \"Bole\",\n  \"woreda\": \"03\",\n  \"fullAddress\": \"Bole Road, near Edna Mall\",\n  \"latitude\": 8.9956,\n  \"longitude\": 38.7869,\n  \"openDays\": [\n    \"Monday\",\n    \"Tuesday\",\n    \"Wednesday\",\n    \"Thursday\",\n    \"Friday\"\n  ],\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"17:00\",\n  \"isOpenSaturday\": true,\n  \"isOpenSunday\": false,\n  \"services\": [\n    \"General Medicine\",\n    \"Pediatrics\",\n    \"Laboratory\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update clinic profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/updateClinicProfile",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "updateClinicProfile"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"0116000001\",\n  \"openTime\": \"08:30\",\n  \"closeTime\": \"18:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Upload clinic media",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/upload-media",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "upload-media"
+              ]
+            },
+            "description": "Admin. Select image files.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "logo",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "coverImage",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Holidays",
+      "description": "Write operations are Admin only.",
+      "item": [
+        {
+          "name": "List holidays",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/holidays?upcoming=true",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "holidays"
+              ],
+              "query": [
+                {
+                  "key": "upcoming",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Create holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/holidays",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "holidays"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-12-25\",\n  \"name\": \"Clinic closure\",\n  \"description\": \"Staff training day\",\n  \"isClosed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data._id) pm.collectionVariables.set(\"holidayId\", res.data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete holiday",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/holidays/{{holidayId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "holidays",
+                "{{holidayId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Seed Ethiopian holidays",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/holidays/seed-ethiopian",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "holidays",
+                "seed-ethiopian"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Doctors",
+      "description": "",
+      "item": [
+        {
+          "name": "List doctors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/getAllDoctors?specialization=&includeInactive=false",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "getAllDoctors"
+              ],
+              "query": [
+                {
+                  "key": "specialization",
+                  "value": ""
+                },
+                {
+                  "key": "includeInactive",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Saves the first doctor into {{doctorId}}.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const list = res.data || res.doctors || [];",
+                  "if (list[0]) { pm.collectionVariables.set(\"doctorId\", list[0]._id); if (list[0].userId) pm.collectionVariables.set(\"doctorUserId\", list[0].userId._id || list[0].userId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get doctor by user ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/getAllDoctors/{{doctorUserId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "getAllDoctors",
+                "{{doctorUserId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Create doctor profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/createDoctorProfile",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "createDoctorProfile"
+              ]
+            },
+            "description": "Admin. userId must be an existing user with role doctor.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{doctorUserId}}\",\n  \"specialization\": \"General Practitioner\",\n  \"licenseNumber\": \"ETH-MED-2026-001\",\n  \"yearsOfExperience\": 5,\n  \"bio\": \"GP with 5 years experience\",\n  \"availableDays\": [\n    \"Monday\",\n    \"Tuesday\",\n    \"Wednesday\",\n    \"Thursday\",\n    \"Friday\"\n  ],\n  \"startTime\": \"08:30\",\n  \"endTime\": \"17:00\",\n  \"breakStart\": \"12:30\",\n  \"breakEnd\": \"13:30\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Doctor self update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/me",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "Doctor only.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Updated bio\",\n  \"yearsOfExperience\": 6,\n  \"availableDays\": [\n    \"Monday\",\n    \"Tuesday\",\n    \"Wednesday\",\n    \"Thursday\",\n    \"Friday\"\n  ],\n  \"startTime\": \"08:30\",\n  \"endTime\": \"17:00\",\n  \"breakStart\": \"12:30\",\n  \"breakEnd\": \"13:30\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Admin update doctor",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/admin/updateDoctorProfile/{{doctorId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "updateDoctorProfile",
+                "{{doctorId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"specialization\": \"Pediatrics\",\n  \"availableDays\": [\n    \"Monday\",\n    \"Tuesday\",\n    \"Wednesday\",\n    \"Thursday\",\n    \"Friday\"\n  ],\n  \"startTime\": \"08:30\",\n  \"endTime\": \"17:00\",\n  \"breakStart\": \"12:30\",\n  \"breakEnd\": \"13:30\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Toggle doctor status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/admin/toggleDoctorStatus/{{doctorId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "toggleDoctorStatus",
+                "{{doctorId}}"
+              ]
+            },
+            "description": "Deactivating cancels open slots.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Doctor Leaves",
+      "description": "",
+      "item": [
+        {
+          "name": "Doctor: request leave",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/me/leaves",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "me",
+                "leaves"
+              ]
+            },
+            "description": "Doctor only.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"startDate\": \"2026-12-01\",\n  \"endDate\": \"2026-12-03\",\n  \"reason\": \"Conference\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Doctor: my leaves",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/me/leaves",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "me",
+                "leaves"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Admin: all leave requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/admin/doctor-leaves?status=pending",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "doctor-leaves"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Admin: review leave",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/admin/doctor-leaves/{{doctorId}}/{{leaveId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "doctor-leaves",
+                "{{doctorId}}",
+                "{{leaveId}}"
+              ]
+            },
+            "description": "status: approved | rejected",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"approved\",\n  \"adminNotes\": \"Approved\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Admin: terminate leave",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/admin/doctor-leaves/{{doctorId}}/{{leaveId}}/terminate",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "doctor-leaves",
+                "{{doctorId}}",
+                "{{leaveId}}",
+                "terminate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adminNotes\": \"Returning early\",\n  \"reason\": \"Needed on duty\",\n  \"regenerateSlots\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Add leave for doctor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/doctors/{{doctorId}}/leaves",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "doctors",
+                "{{doctorId}}",
+                "leaves"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"startDate\": \"2026-12-10\",\n  \"endDate\": \"2026-12-11\",\n  \"reason\": \"Personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get leaves for doctor",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/doctors/{{doctorId}}/leaves",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "doctors",
+                "{{doctorId}}",
+                "leaves"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Delete leave",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/doctors/{{doctorId}}/leaves/{{leaveId}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "doctors",
+                "{{doctorId}}",
+                "leaves",
+                "{{leaveId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Terminate leave (doctor route)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/doctors/{{doctorId}}/leaves/{{leaveId}}/terminate",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "doctors",
+                "{{doctorId}}",
+                "leaves",
+                "{{leaveId}}",
+                "terminate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Back early\",\n  \"regenerateSlots\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Slots",
+      "description": "",
+      "item": [
+        {
+          "name": "Available slots (by path)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/{{doctorId}}/slots?date={{date}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "{{doctorId}}",
+                "slots"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{date}}"
+                }
+              ]
+            },
+            "description": "Saves the first slot into {{slotId}}.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const list = res.data || res.slots || [];",
+                  "if (list[0]) pm.collectionVariables.set(\"slotId\", list[0]._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Available slots (by query)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/slots?doctorId={{doctorId}}&date={{date}}",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "slots"
+              ],
+              "query": [
+                {
+                  "key": "doctorId",
+                  "value": "{{doctorId}}"
+                },
+                {
+                  "key": "date",
+                  "value": "{{date}}"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Update slot status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/slots/{{slotId}}/status",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "slots",
+                "{{slotId}}",
+                "status"
+              ]
+            },
+            "description": "Inter-service route. status: available | booked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"booked\",\n  \"appointmentId\": \"PENDING_SAVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Book slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/bookslots",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "bookslots"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slotId\": \"{{slotId}}\",\n  \"appointmentId\": \"manual-test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Release slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/releaseSlot",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "releaseSlot"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slotId\": \"{{slotId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Block slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/blockSlots",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "blockSlots"
+              ]
+            },
+            "description": "Admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"date\": \"{{date}}\",\n  \"startTime\": \"15:00\",\n  \"endTime\": \"15:40\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unblock slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/cancelBlockedSlot",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "cancelBlockedSlot"
+              ]
+            },
+            "description": "Admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slotId\": \"{{slotId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cleanup expired slots",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{clinicBaseUrl}}/slots/cleanup-expired",
+              "host": [
+                "{{clinicBaseUrl}}"
+              ],
+              "path": [
+                "slots",
+                "cleanup-expired"
+              ]
+            },
+            "description": "Admin."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "clinicBaseUrl",
+      "value": "http://localhost:3002/api/clinics"
+    },
+    {
+      "key": "userBaseUrl",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "date",
+      "value": "2026-11-16"
+    },
+    {
+      "key": "doctorId",
+      "value": ""
+    },
+    {
+      "key": "doctorUserId",
+      "value": ""
+    },
+    {
+      "key": "slotId",
+      "value": ""
+    },
+    {
+      "key": "leaveId",
+      "value": ""
+    },
+    {
+      "key": "holidayId",
+      "value": ""
+    },
+    {
+      "key": "myUserId",
+      "value": ""
+    }
+  ]
+}

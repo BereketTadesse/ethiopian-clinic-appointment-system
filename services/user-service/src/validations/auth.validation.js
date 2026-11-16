@@ -19,7 +19,8 @@ export const registerSchema = z.object({
       error: (issue) => issue.input === undefined ? 'All fields are required' : 'Gender must be male, female, or other'
     }),
     address: z.string({ error: 'All fields are required' }).min(5, 'Address is required'),
-    role: z.enum(['patient', 'doctor', 'admin', 'receptionist']).optional(), // default is patient
+    // Public signup can only create patients. Staff accounts are created by admins via dedicated routes.
+    role: z.literal('patient', { error: 'Public registration is only available for patient accounts' }).optional(),
   }),
 });
 

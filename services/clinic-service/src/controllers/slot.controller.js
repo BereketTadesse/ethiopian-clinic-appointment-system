@@ -1,11 +1,29 @@
+import mongoose from 'mongoose';
 import Slot from '../models/slot.model.js';
 
 export const getDoctorAvailableSlots = async (req, res) => {
   try {
-    const doctorId = req.params.id; // Extracted directly from the path variable /:id
+    const doctorId = req.params.id || req.query.doctorId; // Extracted directly from path /:id or query (?doctorId=...)
     const { date } = req.query;     // Extracted from the query string (?date=...)
 
-    // 1. Check that the date parameter is provided
+    // 1. Check that doctorId is provided
+    if (!doctorId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation Error: Doctor ID is required (either in path or ?doctorId=...).'
+      });
+    }
+
+    // Guard against non-ObjectId inputs (e.g. dummy frontend IDs like 'doc-1')
+    if (!mongoose.Types.ObjectId.isValid(doctorId)) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: []
+      });
+    }
+
+    // 2. Check that the date parameter is provided
     if (!date) {
       return res.status(400).json({
         success: false,
@@ -13,7 +31,7 @@ export const getDoctorAvailableSlots = async (req, res) => {
       });
     }
 
-    // 2. Query the database to find matching records
+    // 3. Query the database to find matching records
     // CRITICAL: Filter only for status: 'available' as specified by the requirements document!
     const availableSlots = await Slot.find({
       doctorId,
@@ -21,7 +39,7 @@ export const getDoctorAvailableSlots = async (req, res) => {
       status: 'available'
     }).sort({ startTime: 1 }); // Sorted chronologically (e.g., 08:00, 08:40)
 
-    // 3. Return the clean list to the patient frontend
+    // 4. Return the clean list to the patient frontend
     return res.status(200).json({
       success: true,
       count: availableSlots.length,
@@ -49,6 +67,15 @@ export const updateSlotStatus = async (req, res) => {
     const slot = await Slot.findById(id);
     if (!slot) {
       return res.status(404).json({ success: false, message: 'Time slot record not found.' });
+    }
+
+    // Guard against race conditions when locking
+    if (status === 'booked' && slot.status === 'booked') {
+      const isFinalizingPending = slot.appointmentId === 'PENDING_SAVE' && appointmentId !== 'PENDING_SAVE';
+      const isSameAppointment = slot.appointmentId && slot.appointmentId === appointmentId;
+      if (!isFinalizingPending && !isSameAppointment) {
+        return res.status(409).json({ success: false, message: 'Conflict: Slot has already been booked.' });
+      }
     }
 
     slot.status = status;

@@ -1,0 +1,619 @@
+{
+  "info": {
+    "name": "Clinic - Appointment Service",
+    "description": "Appointment Service (port 3003). Booking, queue, cancellation, patient cards. Get doctorId and slotId from the Clinic Service collection first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0. Login (run first)",
+      "description": "Run one of these first. The token is stored in the collection variable {{token}} and used by every request.",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@clinic.et\",\n  \"password\": \"Admin@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Doctor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"doctor.abebe@clinic.et\",\n  \"password\": \"Doctor@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient.almaz@gmail.com\",\n  \"password\": \"Patient@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Patient",
+      "description": "Login as Patient first.",
+      "item": [
+        {
+          "name": "Book appointment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "description": "Patient or staff. Staff can add \"patientId\" to book for someone else.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"date\": \"{{date}}\",\n  \"reasonForVisit\": \"Headache and fever\",\n  \"forPerson\": \"Self\",\n  \"patientName\": \"Almaz Tesfaye\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data._id) { pm.collectionVariables.set(\"appointmentId\", res.data._id); pm.collectionVariables.set(\"cardNumber\", res.data.cardNumber); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My appointments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/my-appointments",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "my-appointments"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "My history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/history",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "history"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Cancel appointment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/{{appointmentId}}/cancel",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "cancel"
+              ]
+            },
+            "description": "Patient cancels own; admin/receptionist can cancel any.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cancelReason\": \"Cannot make it\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Doctor",
+      "description": "Login as Doctor first.",
+      "item": [
+        {
+          "name": "Today's queue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/my-queue",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "my-queue"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Appointment detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/{{appointmentId}}",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Complete appointment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/{{appointmentId}}/complete",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "complete"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctorNotes\": \"Diagnosed with malaria\",\n  \"prescription\": \"Coartem 80/480mg twice daily for 3 days\",\n  \"followUpDate\": \"2026-12-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Reception",
+      "description": "Login as Admin (or receptionist) first.",
+      "item": [
+        {
+          "name": "All appointments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments?date={{date}}&doctorId=&status=scheduled",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{date}}"
+                },
+                {
+                  "key": "doctorId",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": "scheduled"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Book for a patient (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"{{patientUserId}}\",\n  \"doctorId\": \"{{doctorId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"date\": \"{{date}}\",\n  \"reasonForVisit\": \"Walk-in\",\n  \"patientName\": \"Walk-in Patient\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data._id) { pm.collectionVariables.set(\"appointmentId\", res.data._id); pm.collectionVariables.set(\"cardNumber\", res.data.cardNumber); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel appointment (staff)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments/{{appointmentId}}/cancel",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "cancel"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cancelReason\": \"Doctor unavailable\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Patient Card",
+      "description": "",
+      "item": [
+        {
+          "name": "My card",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/me",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "me"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Update my card",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/me",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "me"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodType\": \"O+\",\n  \"allergies\": [\n    \"Penicillin\"\n  ],\n  \"chronicConditions\": [\n    \"Asthma\"\n  ],\n  \"currentMedications\": [\n    \"Salbutamol\"\n  ],\n  \"emergencyContactName\": \"Abebe Kebede\",\n  \"emergencyContactPhone\": \"0911223344\",\n  \"emergencyContactRelationship\": \"Brother\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Card by number",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/{{cardNumber}}",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "{{cardNumber}}"
+              ]
+            },
+            "description": "Doctor / admin / receptionist."
+          }
+        },
+        {
+          "name": "Card history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/{{cardNumber}}/history",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "{{cardNumber}}",
+                "history"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "appointmentBaseUrl",
+      "value": "http://localhost:3003/api"
+    },
+    {
+      "key": "userBaseUrl",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "date",
+      "value": "2026-11-16"
+    },
+    {
+      "key": "doctorId",
+      "value": ""
+    },
+    {
+      "key": "slotId",
+      "value": ""
+    },
+    {
+      "key": "appointmentId",
+      "value": ""
+    },
+    {
+      "key": "cardNumber",
+      "value": "CLN-2026-00001"
+    },
+    {
+      "key": "patientUserId",
+      "value": ""
+    },
+    {
+      "key": "myUserId",
+      "value": ""
+    }
+  ]
+}

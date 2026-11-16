@@ -308,8 +308,15 @@ export const swaggerDocument = {
         type: 'object',
         required: ['status'],
         properties: {
-          status: { type: 'string', enum: ['approved', 'rejected'], example: 'approved', description: 'Review decision' },
+          status: { type: 'string', enum: ['approved', 'rejected', 'terminated'], example: 'approved', description: 'Review decision' },
           adminNotes: { type: 'string', example: 'Approved. Clinic schedule adjusted and unbooked slots released.', description: 'Administrator notes or explanation' }
+        }
+      },
+      TerminateDoctorLeaveInput: {
+        type: 'object',
+        properties: {
+          adminNotes: { type: 'string', example: 'Doctor returned to duty early. Terminating approved leave.', description: 'Administrator notes / reason' },
+          regenerateSlots: { type: 'boolean', example: true, default: true, description: 'Automatically regenerate doctor slots for remaining days' }
         }
       },
       AddDoctorLeaveInput: {
@@ -1470,7 +1477,68 @@ export const swaggerDocument = {
               }
             }
           },
-          400: { description: 'Invalid review status (must be "approved" or "rejected")' },
+          400: { description: 'Invalid review status (must be "approved", "rejected", or "terminated")' },
+          401: { description: 'Unauthorized' },
+          403: { description: 'Forbidden - Admin access required' },
+          404: { description: 'Doctor or leave request not found' }
+        }
+      },
+    },
+    '/api/clinics/admin/doctor-leaves/{doctorId}/{leaveId}/terminate': {
+      patch: {
+        tags: ['Doctor Leaves'],
+        summary: 'Admin Only: Terminate an approved doctor leave early',
+        description: 'Protected strictly to administrators (role: "admin"). Revokes and terminates an approved leave, restores the doctor’s schedule, and automatically regenerates consultation slots for the remainder of the leave period.',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'doctorId',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Doctor user ID'
+          },
+          {
+            in: 'path',
+            name: 'leaveId',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Doctor leave request subdocument ID'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TerminateDoctorLeaveInput' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Leave terminated and slots regenerated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: 'Doctor leave terminated successfully. Doctor schedule restored and slots regenerated.' },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        leave: { $ref: '#/components/schemas/DoctorLeave' },
+                        previousStatus: { type: 'string', example: 'approved' },
+                        regeneratedDatesCount: { type: 'number', example: 5 },
+                        regeneratedDates: { type: 'array', items: { type: 'string' }, example: ['2026-10-20', '2026-10-21'] }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          400: { description: 'Leave already terminated or cannot be terminated' },
           401: { description: 'Unauthorized' },
           403: { description: 'Forbidden - Admin access required' },
           404: { description: 'Doctor or leave request not found' }

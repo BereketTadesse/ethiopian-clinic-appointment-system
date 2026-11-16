@@ -13,3 +13,11 @@ try {
 
 // 3. Default fallback
 dotenv.config();
+
+// Fail-fast: Prevent starting up without cryptographic keys configured
+const jwtSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+if (process.env.NODE_ENV !== 'test' && !jwtSecret) {
+  console.error('❌ FATAL: JWT_ACCESS_SECRET or JWT_SECRET is required to verify authentication tokens. Refusing to boot.');
+  process.exit(1);
+}
+

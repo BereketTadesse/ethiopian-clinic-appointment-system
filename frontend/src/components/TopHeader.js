@@ -23,7 +23,7 @@ export default function TopHeader({ onToggleSidebar }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [currentTab, setCurrentTab] = useState(searchParams?.get('tab') || '');
-  const { user, mounted } = useAuth();
+  const { user } = useAuth();
   const { clinic, clinicName } = useClinic();
   const [runtimeStatus, setRuntimeStatus] = useState(null);
 
@@ -250,7 +250,7 @@ export default function TopHeader({ onToggleSidebar }) {
         ) : null}
 
         {/* User Quick Pill */}
-        {mounted && user && (
+        {isMounted && user && (
           <Link
             href="/profile"
             style={{

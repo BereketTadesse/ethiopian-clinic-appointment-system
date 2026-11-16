@@ -1,9 +1,10 @@
+import mongoose from 'mongoose';
 import * as appointmentService from '../services/appointment.service.js';
 
 /**
  * @desc    Submit a new appointment reservation request
  * @route   POST /api/appointments
- * @access  Private (Patient Only)
+ * @access  Private (Patient or Staff)
  */
 export const bookAppointment = async (req, res) => {
   try {
@@ -17,8 +18,8 @@ export const bookAppointment = async (req, res) => {
       });
     }
 
-    const patientId = req.body.patientId || req.user.id; // Either account holder or specified family member
-    const incomingToken = req.headers.authorization?.split(' ')[1] || null;
+    const patientId = req.body.patientId || (req.user?.role === 'patient' ? req.user.id : new mongoose.Types.ObjectId().toString());
+    const incomingToken = req.headers.authorization?.split(' ')[1] || req.cookies?.token || null;
 
     // Call our core business logic workflow orchestrator
     const appointment = await appointmentService.createNewAppointment(req.body, patientId, incomingToken);
@@ -212,23 +213,71 @@ export const getAllAppointmentsAdmin = async (req, res) => {
 };
 
 /**
- * @desc    Admin cancels any appointment. Requires cancelReason. Releases slot in Clinic Service.
+ * @desc    Admin / Receptionist cancels any appointment. Requires cancelReason. Releases slot in Clinic Service.
  * @route   PATCH /api/appointments/:id/cancel
- * @access  Private (Admin Only)
+ * @access  Private (Staff Only)
  */
 export const adminCancelAppointmentHandler = async (req, res) => {
   try {
     const { id } = req.params;
     const { cancelReason } = req.body;
-    const incomingToken = req.headers.authorization?.split(' ')[1] || null;
+    const incomingToken = req.headers.authorization?.split(' ')[1] || req.cookies?.token || null;
 
-    const cancelled = await appointmentService.adminCancelAppointment(id, cancelReason, incomingToken);
+    const cancelled = await appointmentService.adminCancelAppointment(id, cancelReason || 'Cancelled by clinic staff', incomingToken);
 
     return res.status(200).json({
       success: true,
       message: '✅ Appointment cancelled by admin. Slot released back to availability.',
       data: cancelled
     });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || 'Failed to cancel appointment.'
+    });
+  }
+};
+
+/**
+ * @desc    Unified cancellation endpoint: routes based on user role (patient vs staff)
+ * @route   PATCH /api/appointments/:id/cancel
+ * @access  Private (Patient or Staff)
+ */
+export const cancelAppointmentUnified = async (req, res) => {
+  try {
+    const id = req.params.id || req.params.appointmentId;
+    const { cancelReason } = req.body;
+    const incomingToken = req.headers.authorization?.split(' ')[1] || req.cookies?.token || null;
+
+    if (['admin', 'receptionist'].includes(req.user?.role)) {
+      const cancelled = await appointmentService.adminCancelAppointment(
+        id,
+        cancelReason || 'Cancelled by clinic staff',
+        incomingToken
+      );
+      return res.status(200).json({
+        success: true,
+        message: '✅ Appointment cancelled by clinic staff. Slot released back to availability.',
+        data: cancelled
+      });
+    } else if (req.user?.role === 'patient') {
+      const cancelled = await appointmentService.cancelAppointmentByPatient(
+        id,
+        req.user.id,
+        cancelReason || 'Patient requested cancellation',
+        incomingToken
+      );
+      return res.status(200).json({
+        success: true,
+        message: '🎉 Appointment successfully cancelled. Slot released back to availability.',
+        data: cancelled
+      });
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: Unauthorized role to cancel appointment.'
+      });
+    }
   } catch (error) {
     return res.status(error.status || 500).json({
       success: false,

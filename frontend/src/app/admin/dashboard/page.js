@@ -307,14 +307,17 @@ function AdminDashboardContent() {
     try {
       const res = await clinicApi.patch(`/admin/doctor-leaves/${doctorId}/${leaveId}`, {
         status,
-        adminNotes: adminReviewNotes.trim() || (status === 'approved' ? 'Approved by administrator' : 'Rejected by administrator')
+        adminNotes: adminReviewNotes.trim() || (status === 'approved' ? 'Approved by administrator' : status === 'terminated' ? 'Terminated early by administrator' : 'Rejected by administrator')
       });
 
       if (res.data?.success) {
         const removed = res.data.data?.unbookedSlotsRemoved || 0;
         const notice = res.data.data?.bookedAppointmentsNotice || '';
+        const regCount = res.data.data?.regeneratedDatesCount || 0;
         const msg = status === 'approved'
           ? `🎉 Leave request approved! Automatically removed ${removed} unbooked slot(s). ${notice}`
+          : status === 'terminated'
+          ? `🛑 Doctor leave terminated early! Schedule restored and slots generated for ${regCount} day(s).`
           : `❌ Leave request has been rejected.`;
         setNotification(msg);
         setLeaveReviewModal(null);
@@ -2209,10 +2212,11 @@ function AdminDashboardContent() {
                     const isPending = leave.status === 'pending';
                     const isApproved = leave.status === 'approved';
                     const isRejected = leave.status === 'rejected';
+                    const isTerminated = leave.status === 'terminated';
 
-                    const borderCol = isApproved ? '#10b981' : isPending ? '#f59e0b' : '#ef4444';
-                    const badgeBg = isApproved ? '#ecfdf5' : isPending ? '#fef3c7' : '#fef2f2';
-                    const badgeCol = isApproved ? '#047857' : isPending ? '#92400e' : '#b91c1c';
+                    const borderCol = isApproved ? '#10b981' : isPending ? '#f59e0b' : isTerminated ? '#6366f1' : '#ef4444';
+                    const badgeBg = isApproved ? '#ecfdf5' : isPending ? '#fef3c7' : isTerminated ? '#eef2ff' : '#fef2f2';
+                    const badgeCol = isApproved ? '#047857' : isPending ? '#92400e' : isTerminated ? '#4338ca' : '#b91c1c';
 
                     return (
                       <div
@@ -2337,6 +2341,37 @@ function AdminDashboardContent() {
                               }}
                             >
                               <X size={14} /> Reject
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Actions for Approved Requests - Allow Early Termination */}
+                        {isApproved && (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => {
+                                setLeaveReviewModal({
+                                  doctorId: leave.doctorId,
+                                  leaveId: leave.leaveId || leave._id,
+                                  status: 'terminated',
+                                  startDate: leave.startDate,
+                                  endDate: leave.endDate
+                                });
+                                setAdminReviewNotes('Doctor returned to duty early. Terminating approved leave and restoring slots.');
+                              }}
+                              className="btn btn-sm"
+                              style={{
+                                background: '#dc2626',
+                                color: 'white',
+                                fontWeight: 700,
+                                fontSize: '0.8rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                borderRadius: '8px'
+                              }}
+                            >
+                              <Ban size={14} /> Terminate Leave
                             </button>
                           </div>
                         )}
@@ -2556,7 +2591,11 @@ function AdminDashboardContent() {
           <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', background: 'white', borderRadius: '18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
-                {leaveReviewModal.status === 'approved' ? 'Approve Doctor Leave' : 'Reject Doctor Leave'}
+                {leaveReviewModal.status === 'approved' 
+                  ? 'Approve Doctor Leave' 
+                  : leaveReviewModal.status === 'terminated'
+                  ? 'Terminate Approved Leave Early'
+                  : 'Reject Doctor Leave'}
               </h3>
               <button
                 onClick={() => setLeaveReviewModal(null)}
@@ -2568,7 +2607,10 @@ function AdminDashboardContent() {
 
             <p style={{ fontSize: '0.88rem', color: '#334155', marginBottom: '16px' }}>
               You are about to mark this leave request for dates <strong>{leaveReviewModal.startDate} → {leaveReviewModal.endDate}</strong> as{' '}
-              <strong style={{ color: leaveReviewModal.status === 'approved' ? '#059669' : '#dc2626', textTransform: 'uppercase' }}>
+              <strong style={{ 
+                color: leaveReviewModal.status === 'approved' ? '#059669' : leaveReviewModal.status === 'terminated' ? '#dc2626' : '#dc2626', 
+                textTransform: 'uppercase' 
+              }}>
                 {leaveReviewModal.status}
               </strong>.
             </p>
@@ -2593,6 +2635,26 @@ function AdminDashboardContent() {
               </div>
             )}
 
+            {leaveReviewModal.status === 'terminated' && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                fontSize: '0.8rem',
+                color: '#b91c1c',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <AlertCircle size={16} />
+                <span>
+                  Automatic Action: Doctor schedule will be immediately reactivated and consultation slots for remaining working days will be automatically regenerated.
+                </span>
+              </div>
+            )}
+
             <form onSubmit={handleReviewLeaveSubmit}>
               <div className="form-group" style={{ marginBottom: '18px' }}>
                 <label className="form-label">Administrator Feedback / Decision Notes</label>
@@ -2601,7 +2663,11 @@ function AdminDashboardContent() {
                   className="form-control"
                   value={adminReviewNotes}
                   onChange={(e) => setAdminReviewNotes(e.target.value)}
-                  placeholder="Enter comments for the physician..."
+                  placeholder={
+                    leaveReviewModal.status === 'terminated'
+                      ? 'e.g., Doctor returned to duty early. Terminating leave and regenerating slots.'
+                      : 'Enter comments for the physician...'
+                  }
                 />
               </div>
 
@@ -2618,7 +2684,7 @@ function AdminDashboardContent() {
                   type="submit"
                   className="btn"
                   style={{
-                    background: leaveReviewModal.status === 'approved' ? '#10b981' : '#ef4444',
+                    background: leaveReviewModal.status === 'approved' ? '#10b981' : '#dc2626',
                     color: 'white',
                     fontWeight: 800
                   }}
@@ -2630,6 +2696,8 @@ function AdminDashboardContent() {
                     </>
                   ) : leaveReviewModal.status === 'approved' ? (
                     'Confirm Approval'
+                  ) : leaveReviewModal.status === 'terminated' ? (
+                    'Confirm Termination & Restore Slots'
                   ) : (
                     'Confirm Rejection'
                   )}

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
-import API from '@/lib/api';
+import API, { clinicApi, appointmentApi } from '@/lib/api';
 import {
   Calendar,
   Clock,
@@ -84,8 +84,9 @@ export default function DashboardPage() {
   // Step 2 & 3: Doctor, Date & Time Slot
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [slotSpecialtyFilter, setSlotSpecialtyFilter] = useState('all');
-  const [selectedDate, setSelectedDate] = useState('Tomorrow, Oct 14');
-  const [selectedSlot, setSelectedSlot] = useState('');
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState(null);
 
   // Step 4: Payment & Reason
   const [paymentMethod, setPaymentMethod] = useState('telebirr'); // 'telebirr' | 'cbebirr' | 'chapa'
@@ -94,67 +95,34 @@ export default function DashboardPage() {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [latestBookedApt, setLatestBookedApt] = useState(null);
 
-  // Deterministic date options to prevent SSR hydration issues
-  const availableDates = [
-    'Today, Oct 13',
-    'Tomorrow, Oct 14',
-    'Wednesday, Oct 15',
-    'Thursday, Oct 16'
-  ];
-
-  // Doctors & Slot Directory
-  const doctors = [
-    {
-      id: 'doc-1',
-      name: 'Dr. Selamawit Bekele',
-      specialty: 'General Medicine',
-      experience: '8 Years Exp',
-      location: 'Bole Medhanealem Clinic',
-      availableToday: true,
-      rating: 4.9,
-      slots: ['08:45 AM', '09:30 AM', '11:00 AM', '02:00 PM', '03:15 PM']
-    },
-    {
-      id: 'doc-2',
-      name: 'Dr. Yared Assefa',
-      specialty: 'Cardiologist',
-      experience: '12 Years Exp',
-      location: 'Sarbet Specialist Hospital',
-      availableToday: true,
-      rating: 4.8,
-      slots: ['09:00 AM', '10:30 AM', '01:30 PM', '04:00 PM']
-    },
-    {
-      id: 'doc-3',
-      name: 'Dr. Helina Girma',
-      specialty: 'Pediatrician',
-      experience: '6 Years Exp',
-      location: 'CMC Family Care Center',
-      availableToday: true,
-      rating: 5.0,
-      slots: ['08:30 AM', '10:00 AM', '01:00 PM', '02:30 PM', '04:30 PM']
-    },
-    {
-      id: 'doc-4',
-      name: 'Dr. Ermias Kebede',
-      specialty: 'Dental Surgeon',
-      experience: '10 Years Exp',
-      location: 'Kazanchis Dental Pavilion',
-      availableToday: true,
-      rating: 4.7,
-      slots: ['09:15 AM', '11:30 AM', '02:15 PM', '05:00 PM']
-    },
-    {
-      id: 'doc-5',
-      name: 'Dr. Almaz Tefera',
-      specialty: 'Gynecologist',
-      experience: '9 Years Exp',
-      location: 'Hayat Maternal Center',
-      availableToday: true,
-      rating: 4.9,
-      slots: ['09:00 AM', '11:00 AM', '01:45 PM', '03:30 PM']
+  // Dynamic 7-day date options
+  const generateUpcomingDates = () => {
+    const dates = [];
+    const today = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const iso = d.toISOString().split('T')[0];
+      let label;
+      if (i === 0) label = `Today, ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+      else if (i === 1) label = `Tomorrow, ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+      else label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      dates.push({ iso, label });
     }
-  ];
+    return dates;
+  };
+
+  const [dateOptions] = useState(generateUpcomingDates());
+  const [selectedDateObj, setSelectedDateObj] = useState(dateOptions[1] || dateOptions[0]);
+  const [selectedDate, setSelectedDate] = useState(dateOptions[1]?.label || 'Tomorrow');
+
+  // Helper to validate MongoDB ObjectId
+  const isValidMongoId = (id) => /^[0-9a-fA-F]{24}$/.test(String(id || ''));
+
+  const [doctors, setDoctors] = useState([]);
+  const [loadingDoctors, setLoadingDoctors] = useState(true);
+  const [cardSlotsMap, setCardSlotsMap] = useState({});
+  const [loadingCardSlots, setLoadingCardSlots] = useState(false);
 
   // Standardized sequential Clinic Card number
   const makeCardNumber = (seed) => {
@@ -162,45 +130,22 @@ export default function DashboardPage() {
     return `CLN-2026-${cleanSeed.padStart(5, '0')}`;
   };
 
-  // Preloaded Appointments List
-  const [appointments, setAppointments] = useState([
-    {
-      id: 'apt-101',
-      doctorName: 'Dr. Selamawit Bekele',
-      specialty: 'General Medicine',
-      clinic: 'CareSync Central Clinic - Bole Branch',
-      date: 'Tomorrow, Oct 14',
-      time: '09:30 AM',
-      forPerson: 'Self (Primary Account Holder)',
-      patientName: 'Account Holder',
-      cardNumber: 'CLN-2026-00001',
-      queueNumber: 1,
-      status: 'confirmed',
-      room: 'Room 204',
-      paymentFee: '100 ETB',
-      paymentMethod: 'Telebirr',
-      paymentTxnId: 'TXN-TB-2026-00001',
-      isPaid: true
-    },
-    {
-      id: 'apt-102',
-      doctorName: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrician',
-      clinic: 'CareSync Children Hospital - Piassa',
-      date: 'Friday, Oct 17',
-      time: '02:00 PM',
-      forPerson: 'Tigist (Daughter)',
-      patientName: 'Tigist Bekele',
-      cardNumber: 'CLN-2026-00045',
-      queueNumber: 4,
-      status: 'confirmed',
-      room: 'Room 105',
-      paymentFee: '100 ETB',
-      paymentMethod: 'CBE Birr',
-      paymentTxnId: 'TXN-CBE-2026-00045',
-      isPaid: true
-    }
-  ]);
+  // Helper to format slot time safely whether it is a MongoDB object or string
+  const getSlotDisplayString = (slot) => {
+    if (!slot) return 'No slot selected';
+    if (typeof slot === 'string') return slot;
+    if (slot.startTime && slot.endTime) return `${slot.startTime} - ${slot.endTime}`;
+    if (slot.startTime) return slot.startTime;
+    if (slot.time) return slot.time;
+    return 'Confirmed Time Slot';
+  };
+
+  // Real Appointments & Patient Card from Backend
+  const [patientCard, setPatientCard] = useState(null);
+  const [loadingCard, setLoadingCard] = useState(true);
+  const [appointments, setAppointments] = useState([]);
+  const [pastAppointments, setPastAppointments] = useState([]);
+  const [loadingAppointments, setLoadingAppointments] = useState(true);
 
   // Fetch real registered family members
   const fetchFamilyMembers = async () => {
@@ -219,33 +164,201 @@ export default function DashboardPage() {
     }
   };
 
+  // Fetch Patient Card from appointment-service
+  const fetchMyCard = async () => {
+    try {
+      setLoadingCard(true);
+      const res = await appointmentApi.get('/cards/me');
+      if (res.data?.success && res.data?.data) {
+        setPatientCard(res.data.data);
+      } else {
+        setPatientCard(null);
+      }
+    } catch (err) {
+      console.log('Notice: No established patient card yet', err?.message);
+      setPatientCard(null);
+    } finally {
+      setLoadingCard(false);
+    }
+  };
+
+  // Fetch Appointments from appointment-service
+  const fetchAppointments = async () => {
+    try {
+      setLoadingAppointments(true);
+      const [upcomingRes, historyRes] = await Promise.allSettled([
+        appointmentApi.get('/appointments/my-appointments'),
+        appointmentApi.get('/appointments/history')
+      ]);
+
+      if (upcomingRes.status === 'fulfilled' && upcomingRes.value.data?.success) {
+        const list = upcomingRes.value.data.data || [];
+        setAppointments(list);
+      }
+      if (historyRes.status === 'fulfilled' && historyRes.value.data?.success) {
+        const all = historyRes.value.data.data || [];
+        const past = all.filter(a => a.status === 'completed' || a.status === 'cancelled');
+        setPastAppointments(past);
+      }
+    } catch (err) {
+      console.log('Notice: Could not load appointments', err?.message);
+    } finally {
+      setLoadingAppointments(false);
+    }
+  };
+
+  // Fetch Real Doctors from clinic-service
+  const fetchDoctors = async () => {
+    try {
+      setLoadingDoctors(true);
+      const res = await clinicApi.get('/getAllDoctors');
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        const validDocs = res.data.data.filter((doc) => isValidMongoId(doc._id || doc.id));
+        if (validDocs.length > 0) {
+          const mapped = validDocs.map((doc, idx) => {
+            const account = doc.accountDetails && typeof doc.accountDetails === 'object' ? doc.accountDetails : {};
+            const rawName = account.fullName || doc.name || `Staff Physician ${idx + 1}`;
+            const formattedName = rawName.startsWith('Dr.') ? rawName : `Dr. ${rawName}`;
+            const expYears = doc.yearsOfExperience ?? doc.experience;
+            const docId = doc._id || doc.id;
+            return {
+              id: docId,
+              _id: docId,
+              name: formattedName,
+              specialty: doc.specialization || 'General Practice',
+              experience: expYears ? `${expYears} Years Exp` : 'Licensed Physician',
+              location: doc.bio || (doc.room ? `Room ${doc.room}` : 'Central Consultation Suite'),
+              availableDays: Array.isArray(doc.availableDays) ? doc.availableDays : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+              availableToday: doc.isActive ?? true,
+              rating: 4.9,
+              startTime: doc.startTime || '08:00',
+              endTime: doc.endTime || '17:00',
+              slots: []
+            };
+          });
+          setDoctors(mapped);
+          if (!selectedDoctor && mapped.length > 0) {
+            setSelectedDoctor(mapped[0]);
+          }
+        } else {
+          setDoctors([]);
+        }
+      }
+    } catch (err) {
+      console.warn('Could not load doctors roster:', err?.message);
+      setDoctors([]);
+    } finally {
+      setLoadingDoctors(false);
+    }
+  };
+
+  // Fetch slots for currently selected doctor and date
+  const fetchDoctorSlots = async (docId, dateIso) => {
+    if (!docId || !dateIso || !isValidMongoId(docId)) {
+      setAvailableSlots([]);
+      setSelectedSlot(null);
+      return;
+    }
+    try {
+      setLoadingSlots(true);
+      const res = await clinicApi.get(`/${docId}/slots`, {
+        params: { date: dateIso }
+      });
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        setAvailableSlots(res.data.data);
+        if (res.data.data.length > 0) {
+          setSelectedSlot(res.data.data[0]);
+        } else {
+          setSelectedSlot(null);
+        }
+      } else {
+        setAvailableSlots([]);
+        setSelectedSlot(null);
+      }
+    } catch (err) {
+      console.warn('Could not load slots from clinic-service:', err?.message);
+      setAvailableSlots([]);
+      setSelectedSlot(null);
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
+
+  // Initial Data Load
   useEffect(() => {
     fetchFamilyMembers();
+    fetchMyCard();
+    fetchAppointments();
+    fetchDoctors();
   }, []);
 
-  // Listen for deep-link / URL query parameters to launch flow seamlessly
+  // Live batch load available slots for all doctors for the current date
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const memberId = params.get('bookMemberId');
-      const action = params.get('action');
-
-      if (memberId && familyMembers.length > 0) {
-        const found = familyMembers.find(m => m._id === memberId);
-        if (found) {
-          startFlowForPerson(found);
-          window.history.replaceState({}, '', '/dashboard');
+    if (!doctors.length || !selectedDateObj?.iso) return;
+    let isMounted = true;
+    const loadAllSlots = async () => {
+      setLoadingCardSlots(true);
+      try {
+        const validDoctors = doctors.filter(
+          (doc) => isValidMongoId(doc._id || doc.id)
+        );
+        if (validDoctors.length === 0) {
+          if (isMounted) {
+            setCardSlotsMap({});
+            setLoadingCardSlots(false);
+          }
+          return;
         }
-      } else if (action === 'book' || action === 'take_card') {
-        startUnifiedFlow();
-        window.history.replaceState({}, '', '/dashboard');
-      }
-    }
-  }, [familyMembers]);
 
-  const handleCancelAppointment = (id) => {
-    if (confirm('Are you sure you want to cancel this appointment?')) {
-      setAppointments(appointments.filter(a => a.id !== id));
+        const results = await Promise.allSettled(
+          validDoctors.map((doc) =>
+            clinicApi
+              .get(`/${doc._id || doc.id}/slots`, { params: { date: selectedDateObj.iso } })
+              .then((res) => ({ docId: doc._id || doc.id, slots: res.data?.data || [] }))
+          )
+        );
+        if (isMounted) {
+          const map = {};
+          results.forEach((r) => {
+            if (r.status === 'fulfilled' && r.value) {
+              map[r.value.docId] = r.value.slots;
+            }
+          });
+          setCardSlotsMap(map);
+        }
+      } catch (err) {
+        console.warn('Could not batch load card slots:', err?.message);
+      } finally {
+        if (isMounted) setLoadingCardSlots(false);
+      }
+    };
+    loadAllSlots();
+    return () => {
+      isMounted = false;
+    };
+  }, [doctors, selectedDateObj]);
+
+  // Fetch slots when selected doctor or date changes
+  useEffect(() => {
+    const docId = selectedDoctor?._id || selectedDoctor?.id;
+    if (docId && selectedDateObj?.iso && isValidMongoId(docId)) {
+      fetchDoctorSlots(docId, selectedDateObj.iso);
+    }
+  }, [selectedDoctor, selectedDateObj]);
+
+  const handleCancelAppointment = async (id) => {
+    if (!confirm('Are you sure you want to cancel this appointment? The time slot will be released back to the clinic.')) {
+      return;
+    }
+    try {
+      await appointmentApi.patch(`/appointments/${id}/cancel`, {
+        cancelReason: 'Cancelled by patient via dashboard'
+      });
+      setBookingSuccess('Appointment successfully cancelled and slot released back to clinic inventory.');
+      await fetchAppointments();
+      setTimeout(() => setBookingSuccess(''), 5000);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to cancel appointment.');
     }
   };
 
@@ -260,16 +373,16 @@ export default function DashboardPage() {
       relationship: 'Account Holder',
       forPerson: 'Self (Primary Account Holder)',
       memberId: 'self',
-      cardNumber: makeCardNumber(user?._id || '00001'),
+      cardNumber: patientCard?.cardNumber || 'Auto-generated upon booking (በቀጠሮ ጊዜ ይወጣል)',
       dateOfBirth: user?.birthDate || null,
       gender: user?.gender || 'Not specified',
       nationalId: user?.nationalId || null,
-      isPaid: false
+      isPaid: Boolean(patientCard?.cardNumber)
     };
     setActivePatient(defaultPatient);
-    setSelectedDoctor(doctors[0]);
-    setSelectedDate('Tomorrow, Oct 14');
-    setSelectedSlot(doctors[0]?.slots[0] || '09:30 AM');
+    if (doctors.length > 0) {
+      setSelectedDoctor(doctors[0]);
+    }
     setPaymentPhone(user?.phoneNumber || '0911223344');
     setFlowStep('patient');
     setShowFlowModal(true);
@@ -292,9 +405,9 @@ export default function DashboardPage() {
     setActivePatient(patientObj);
     setFlowRecipientType('family');
     setSelectedFamilyId(member._id);
-    setSelectedDoctor(doctors[0]);
-    setSelectedDate('Tomorrow, Oct 14');
-    setSelectedSlot(doctors[0]?.slots[0] || '09:30 AM');
+    if (doctors.length > 0) {
+      setSelectedDoctor(doctors[0]);
+    }
     // Start at doctor selection since patient is locked in
     setFlowStep('doctor');
     setShowFlowModal(true);
@@ -302,20 +415,23 @@ export default function DashboardPage() {
 
   // View Digital Clinic Card Viewer
   const openCardViewer = (item) => {
+    const cardData = patientCard || {};
     setActivePatient({
-      patientName: item.patientName || item.fullName || user?.name || 'Patient',
-      relationship: item.relationship || (item.forPerson?.includes('Self') ? 'Account Holder' : item.forPerson) || 'Account Holder',
-      cardNumber: item.cardNumber || makeCardNumber(item._id || '00001'),
-      memberId: item._id || item.memberId || 'self',
-      dateOfBirth: item.dateOfBirth || null,
-      gender: item.gender || 'Not specified',
-      nationalId: item.nationalId || null,
-      doctorName: item.doctorName,
-      clinic: item.clinic || 'CareSync Ethiopian Health Network',
+      patientName: item?.patientName || item?.fullName || user?.name || 'Patient',
+      relationship: item?.relationship || (item?.forPerson?.includes('Self') ? 'Account Holder' : item?.forPerson) || 'Account Holder',
+      cardNumber: item?.cardNumber || cardData.cardNumber || makeCardNumber(user?._id || '00001'),
+      memberId: item?._id || item?.memberId || 'self',
+      dateOfBirth: item?.dateOfBirth || user?.birthDate || null,
+      gender: item?.gender || user?.gender || 'Not specified',
+      nationalId: item?.nationalId || user?.nationalId || null,
+      doctorName: item?.doctorName,
+      clinic: item?.clinic || clinicName || 'CareSync Ethiopian Health Network',
+      bloodType: cardData.bloodType || 'Not specified',
+      allergies: cardData.allergies?.length > 0 ? cardData.allergies.join(', ') : 'None recorded',
       isPaid: true,
-      paymentTxnId: item.paymentTxnId || 'TXN-TB-2026-88192',
-      paymentMethod: item.paymentMethod || 'Telebirr',
-      paymentFee: item.paymentFee || '100 ETB'
+      paymentTxnId: item?.paymentTxnId || 'TXN-TB-2026-88192',
+      paymentMethod: item?.paymentMethod || 'Telebirr',
+      paymentFee: item?.paymentFee || '100 ETB'
     });
     setFlowStep('card_viewer');
     setShowFlowModal(true);
@@ -329,18 +445,20 @@ export default function DashboardPage() {
       relationship: 'Account Holder',
       forPerson: 'Self (Primary Account Holder)',
       memberId: 'self',
-      cardNumber: makeCardNumber(user?._id || '00001'),
+      cardNumber: patientCard?.cardNumber || 'Auto-generated upon booking',
       dateOfBirth: user?.birthDate || null,
       gender: user?.gender || 'Not specified',
       nationalId: user?.nationalId || null,
-      isPaid: false
+      isPaid: Boolean(patientCard?.cardNumber)
     };
     setActivePatient(defaultPatient);
     setSelectedDoctor(doctor);
-    setSelectedDate('Tomorrow, Oct 14');
-    setSelectedSlot(slot || doctor.slots[0]);
-    // Guide them into the 4th step (Payment & Confirm) or Step 1
-    setFlowStep(slot ? 'payment_confirm' : 'slot');
+    if (slot) {
+      setSelectedSlot(slot);
+      setFlowStep('payment_confirm');
+    } else {
+      setFlowStep('slot');
+    }
     setShowFlowModal(true);
   };
 
@@ -440,9 +558,6 @@ export default function DashboardPage() {
   // ── STEP 2: DOCTOR SELECTED -> PROCEED TO SLOT (STEP 3) ───────
   const handleSelectDoctorAndProceed = (doctor) => {
     setSelectedDoctor(doctor);
-    if (!selectedSlot || !doctor.slots.includes(selectedSlot)) {
-      setSelectedSlot(doctor.slots[0]);
-    }
     setFlowStep('slot');
   };
 
@@ -453,46 +568,68 @@ export default function DashboardPage() {
   };
 
   // ── STEP 4: CARD PAYMENT (100 ETB) & COMPLETE CARD TAKING ─────
-  const handleCompleteCardTakingAndBooking = (e) => {
+  const handleCompleteCardTakingAndBooking = async (e) => {
     if (e) e.preventDefault();
     setIsProcessingPayment(true);
     setBookingError('');
 
-    // Simulate authentic Ethiopian payment processing (1.2s delay - Frontend Only)
-    setTimeout(() => {
-      setIsProcessingPayment(false);
-
+    try {
       if (!selectedDoctor || !selectedSlot) {
         setBookingError('Please select a doctor and consultation time slot.');
+        setIsProcessingPayment(false);
         return;
       }
 
+      const doctorId = selectedDoctor._id || selectedDoctor.id;
+      // selectedSlot can be an object from availableSlots with _id, or fallback string/id
+      const slotId = typeof selectedSlot === 'object' ? (selectedSlot._id || selectedSlot.id) : selectedSlot;
+      const targetDate = selectedDateObj?.iso || new Date().toISOString().split('T')[0];
+      const targetPatientId = activePatient?.memberId === 'self' || !activePatient?.memberId
+        ? (user?._id || user?.id)
+        : activePatient.memberId;
+
+      const bookingPayload = {
+        doctorId,
+        slotId,
+        date: targetDate,
+        patientId: targetPatientId,
+        patientName: activePatient?.patientName || user?.name || 'Account Holder',
+        forPerson: activePatient?.forPerson || 'Self (Primary Account Holder)',
+        reasonForVisit: reasonForVisit.trim() || 'General Clinical Consultation'
+      };
+
+      const res = await appointmentApi.post('/appointments', bookingPayload);
+      const savedApt = res.data?.data;
+
       const generatedTxnId = `TXN-${paymentMethod === 'telebirr' ? 'TB' : paymentMethod === 'cbebirr' ? 'CBE' : 'CHP'}-2026-${Math.floor(10000 + Math.random() * 90000)}`;
-      const assignedQueue = appointments.filter(a => a.doctorName === selectedDoctor.name).length + 1;
       const paymentMethodName = paymentMethod === 'telebirr' ? 'Telebirr' : paymentMethod === 'cbebirr' ? 'CBE Birr' : 'Chapa';
+
+      const slotTimeDisplay = getSlotDisplayString(selectedSlot);
 
       const updatedPatient = {
         ...activePatient,
+        cardNumber: savedApt?.cardNumber || activePatient?.cardNumber,
         isPaid: true,
         paymentTxnId: generatedTxnId,
         paymentMethod: paymentMethodName,
         paymentFee: '100 ETB',
-        paymentDate: 'Today, Oct 13, 2026'
+        paymentDate: selectedDateObj?.label || 'Today'
       };
 
       const newApt = {
-        id: `apt-${Date.now()}`,
+        id: savedApt?._id || `apt-${Date.now()}`,
+        _id: savedApt?._id,
         doctorName: selectedDoctor.name,
         specialty: selectedDoctor.specialty,
-        clinic: selectedDoctor.location,
-        date: selectedDate,
-        time: selectedSlot,
+        clinic: selectedDoctor.location || clinicName,
+        date: selectedDateObj?.label || targetDate,
+        time: slotTimeDisplay,
         forPerson: activePatient?.forPerson || 'Self (Primary Account Holder)',
         patientName: activePatient?.patientName || user?.name || 'Account Holder',
-        cardNumber: activePatient?.cardNumber || makeCardNumber(user?._id || '00001'),
-        queueNumber: assignedQueue,
-        status: 'confirmed',
-        room: `Suite ${100 + assignedQueue}`,
+        cardNumber: savedApt?.cardNumber || activePatient?.cardNumber || makeCardNumber(user?._id || '00001'),
+        queueNumber: savedApt?.queueNumber || 1,
+        status: savedApt?.status || 'scheduled',
+        room: selectedDoctor.location || `Suite 201`,
         reason: reasonForVisit.trim() || 'General Clinical Consultation',
         paymentFee: '100 ETB',
         paymentMethod: paymentMethodName,
@@ -501,24 +638,38 @@ export default function DashboardPage() {
       };
 
       setActivePatient(updatedPatient);
-      setAppointments([newApt, ...appointments]);
       setLatestBookedApt(newApt);
       setFlowStep('complete');
 
-      setBookingSuccess(`🎉 Card officially issued & consultation spot confirmed! 100 ETB verified via ${paymentMethodName} (Ref: ${generatedTxnId}). Queue #${assignedQueue}`);
+      setBookingSuccess(`🎉 Card officially linked & consultation spot confirmed! 100 ETB verified via ${paymentMethodName} (Ref: ${generatedTxnId}). Queue #${newApt.queueNumber}`);
+
+      // Refresh live appointments & patient card
+      await Promise.allSettled([fetchAppointments(), fetchMyCard()]);
       setTimeout(() => setBookingSuccess(''), 7000);
-    }, 1200);
+    } catch (err) {
+      console.error('Booking failed:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Failed to complete appointment booking.';
+      setBookingError(errMsg);
+    } finally {
+      setIsProcessingPayment(false);
+    }
   };
+
+  // Available specialties derived from real loaded doctors
+  const availableSpecialties = [
+    'all',
+    ...Array.from(new Set(doctors.map(d => d.specialty).filter(Boolean)))
+  ];
 
   // Filtered doctors for in-modal selection
   const filteredModalDoctors = slotSpecialtyFilter === 'all'
     ? doctors
-    : doctors.filter(d => d.specialty.toLowerCase().includes(slotSpecialtyFilter.toLowerCase()));
+    : doctors.filter(d => (d.specialty || '').toLowerCase().includes(slotSpecialtyFilter.toLowerCase()));
 
   // Filtered doctors for on-page directory
   const filteredPageDoctors = selectedSpecialty === 'all'
     ? doctors
-    : doctors.filter(d => d.specialty.toLowerCase().includes(selectedSpecialty.toLowerCase()));
+    : doctors.filter(d => (d.specialty || '').toLowerCase().includes(selectedSpecialty.toLowerCase()));
 
   return (
     <div style={{ backgroundColor: 'var(--bg-page)', minHeight: '90vh', padding: '36px 0 60px' }}>
@@ -641,15 +792,27 @@ export default function DashboardPage() {
               </div>
             </div>
             <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '6px', fontFamily: 'monospace' }}>
-              {makeCardNumber(user?._id || '00001')}
+              {patientCard?.cardNumber || (loadingCard ? 'Checking...' : 'Not Issued Yet (ያልወጣ)')}
             </div>
             <div style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600, marginTop: '4px' }}>
-              <button
-                onClick={() => openCardViewer({ patientName: user?.name, forPerson: 'Self', cardNumber: makeCardNumber(user?._id || '00001') })}
-                style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', padding: 0, fontWeight: 700 }}
-              >
-                View Digital Card (Paid) →
-              </button>
+              {patientCard?.cardNumber ? (
+                <button
+                  onClick={() => openCardViewer({
+                    patientName: user?.name,
+                    forPerson: 'Self',
+                    cardNumber: patientCard.cardNumber,
+                    bloodType: patientCard.bloodType,
+                    allergies: patientCard.allergies
+                  })}
+                  style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', padding: 0, fontWeight: 700 }}
+                >
+                  View Digital Card (የታካሚ ካርድ) →
+                </button>
+              ) : (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  Auto-generates upon initial booking
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -683,7 +846,11 @@ export default function DashboardPage() {
           </div>
 
           {activeTab === 'upcoming' ? (
-            appointments.length === 0 ? (
+            loadingAppointments ? (
+              <div className="glass-panel" style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                <span className="spinner" style={{ marginRight: '8px' }} /> Loading active clinic appointments...
+              </div>
+            ) : appointments.length === 0 ? (
               <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px' }}>
                 <Calendar size={40} style={{ color: '#cbd5e1', marginBottom: '12px', display: 'inline-block' }} />
                 <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>No active appointments booked</h3>
@@ -696,98 +863,181 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '18px' }}>
-                {appointments.map((apt) => (
-                  <div key={apt.id} className="glass-panel" style={{ padding: '24px', borderLeft: '4px solid #4f46e5', position: 'relative' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                          <span style={{
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            background: apt.status === 'confirmed' ? '#ecfdf5' : '#fef3c7',
-                            color: apt.status === 'confirmed' ? '#047857' : '#92400e'
-                          }}>
-                            ● {apt.status}
-                          </span>
-                          <span style={{
-                            fontSize: '0.72rem',
-                            fontWeight: 800,
-                            background: '#eef2ff',
-                            color: '#4338ca',
-                            padding: '3px 8px',
-                            borderRadius: '6px'
-                          }}>
-                            Queue #{apt.queueNumber}
-                          </span>
+                {appointments.map((apt) => {
+                  const aptId = apt._id || apt.id;
+                  const doc = doctors.find(d => String(d._id) === String(apt.doctorId) || String(d.id) === String(apt.doctorId));
+                  const doctorName = apt.doctorName || doc?.name || 'Staff Physician';
+                  const specialty = apt.specialty || doc?.specialty || 'General Practice';
+                  const timeStr = apt.time || (apt.startTime && apt.endTime ? `${apt.startTime} - ${apt.endTime}` : (apt.startTime || 'Scheduled Time'));
+                  const roomStr = apt.room || doc?.location || 'Consultation Suite';
+                  const isScheduled = ['scheduled', 'confirmed'].includes(apt.status);
+
+                  return (
+                    <div key={aptId} className="glass-panel" style={{ padding: '24px', borderLeft: '4px solid #4f46e5', position: 'relative' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                            <span style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              background: isScheduled ? '#ecfdf5' : '#fef3c7',
+                              color: isScheduled ? '#047857' : '#92400e'
+                            }}>
+                              ● {apt.status}
+                            </span>
+                            <span style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 800,
+                              background: '#eef2ff',
+                              color: '#4338ca',
+                              padding: '3px 8px',
+                              borderRadius: '6px'
+                            }}>
+                              Queue #{apt.queueNumber}
+                            </span>
+                          </div>
+
+                          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)', margin: '2px 0' }}>
+                            {doctorName}
+                          </h3>
+                          <div style={{ fontSize: '0.82rem', color: '#4f46e5', fontWeight: 600 }}>{specialty}</div>
                         </div>
 
-                        <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                          {apt.doctorName}
-                        </h3>
-                        <div style={{ fontSize: '0.82rem', color: '#4f46e5', fontWeight: 600 }}>{apt.specialty}</div>
-                      </div>
-
-                      <span style={{
-                        fontSize: '0.75rem',
-                        background: '#f8fafc',
-                        border: '1px solid #e2e8f0',
-                        padding: '4px 10px',
-                        borderRadius: '20px',
-                        fontWeight: 700,
-                        color: '#334155'
-                      }}>
-                        For: {apt.forPerson}
-                      </span>
-                    </div>
-
-                    {/* Card and Spot Details */}
-                    <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}>
-                        <CreditCard size={15} style={{ color: '#4f46e5' }} />
-                        <span>Card: <strong style={{ fontFamily: 'monospace' }}>{apt.cardNumber}</strong></span>
-                        <span style={{ fontSize: '0.72rem', background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, marginLeft: '4px' }}>
-                          Paid 100 ETB
+                        <span style={{
+                          fontSize: '0.75rem',
+                          background: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          fontWeight: 700,
+                          color: '#334155'
+                        }}>
+                          For: {apt.forPerson || 'Self'}
                         </span>
                       </div>
-                      <button
-                        onClick={() => openCardViewer(apt)}
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.74rem', padding: '3px 8px' }}
-                      >
-                        View Card (ካርድ)
-                      </button>
-                    </div>
 
-                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', fontSize: '0.82rem', color: 'var(--text-muted)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Clock size={15} style={{ color: '#4f46e5' }} />
-                        <span>{apt.date} • {apt.time}</span>
+                      {/* Card and Spot Details */}
+                      <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}>
+                          <CreditCard size={15} style={{ color: '#4f46e5' }} />
+                          <span>Card: <strong style={{ fontFamily: 'monospace' }}>{apt.cardNumber}</strong></span>
+                          <span style={{ fontSize: '0.72rem', background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, marginLeft: '4px' }}>
+                            Paid 100 ETB
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => openCardViewer(apt)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ fontSize: '0.74rem', padding: '3px 8px' }}
+                        >
+                          View Card (ካርድ)
+                        </button>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <MapPin size={15} style={{ color: '#10b981' }} />
-                        <span>{apt.room}</span>
-                      </div>
-                    </div>
 
-                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                      <button
-                        onClick={() => handleCancelAppointment(apt.id)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        Cancel Booking
-                      </button>
+                      <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', fontSize: '0.82rem', color: 'var(--text-muted)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Clock size={15} style={{ color: '#4f46e5' }} />
+                          <span>{apt.date} • {timeStr}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <MapPin size={15} style={{ color: '#10b981' }} />
+                          <span>{roomStr}</span>
+                        </div>
+                      </div>
+
+                      {isScheduled && (
+                        <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                          <button
+                            onClick={() => handleCancelAppointment(aptId)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
+                          >
+                            Cancel Booking
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )
           ) : (
-            <div className="glass-panel" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
-              <p>Completed 3 consultations in September 2026. All medical records and cards saved to your master clinic profile.</p>
-            </div>
+            pastAppointments.length === 0 ? (
+              <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <p>No past consultations or cancelled appointments found in your medical records.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '18px' }}>
+                {pastAppointments.map((apt) => {
+                  const aptId = apt._id || apt.id;
+                  const doc = doctors.find(d => String(d._id) === String(apt.doctorId) || String(d.id) === String(apt.doctorId));
+                  const doctorName = apt.doctorName || doc?.name || 'Staff Physician';
+                  const specialty = apt.specialty || doc?.specialty || 'General Practice';
+                  const timeStr = apt.time || (apt.startTime && apt.endTime ? `${apt.startTime} - ${apt.endTime}` : (apt.startTime || ''));
+                  const isCompleted = apt.status === 'completed';
+
+                  return (
+                    <div
+                      key={aptId}
+                      className="glass-panel"
+                      style={{
+                        padding: '20px',
+                        borderLeft: `4px solid ${isCompleted ? '#10b981' : '#94a3b8'}`
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <span style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: isCompleted ? '#ecfdf5' : '#f1f5f9',
+                            color: isCompleted ? '#047857' : '#64748b'
+                          }}>
+                            ● {apt.status}
+                          </span>
+                          <h4 style={{ margin: '6px 0 2px', fontSize: '1.05rem', fontWeight: 700 }}>
+                            {doctorName}
+                          </h4>
+                          <div style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600 }}>
+                            {specialty}
+                          </div>
+                        </div>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: '#f8fafc', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                          {apt.cardNumber}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                        📅 {apt.date} • {timeStr}
+                      </div>
+
+                      {apt.cancelReason && (
+                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '10px', color: '#991b1b' }}>
+                          <strong>Reason for Cancellation:</strong> {apt.cancelReason}
+                        </div>
+                      )}
+
+                      {apt.doctorNotes && (
+                        <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '10px', color: '#334155' }}>
+                          <strong>Doctor Notes:</strong> {apt.doctorNotes}
+                        </div>
+                      )}
+
+                      {apt.prescription && (
+                        <div style={{ background: '#ecfdf5', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '6px', color: '#047857' }}>
+                          <strong>Prescription:</strong> {apt.prescription}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
           )}
         </div>
 
@@ -807,82 +1057,170 @@ export default function DashboardPage() {
             </button>
           </div>
 
-          {/* Specialty Filter Buttons */}
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
-            {['all', 'General', 'Cardiologist', 'Pediatrician', 'Dental', 'Gynecologist'].map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setSelectedSpecialty(filter)}
-                className={`btn btn-sm ${selectedSpecialty === filter ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ textTransform: 'capitalize' }}
-              >
-                {filter === 'all' ? 'All Specialties' : filter}
-              </button>
-            ))}
+          {/* Specialty Filter Buttons & Quick Date Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '14px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {availableSpecialties.map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setSelectedSpecialty(filter)}
+                  className={`btn btn-sm ${selectedSpecialty === filter ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ textTransform: 'capitalize', fontSize: '0.8rem' }}
+                >
+                  {filter === 'all' ? 'All Specialties' : filter}
+                </button>
+              ))}
+            </div>
+
+            {/* Quick Consultation Date Selector */}
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f8fafc', padding: '4px 8px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                Slots for:
+              </span>
+              {dateOptions.slice(0, 3).map((dObj) => (
+                <button
+                  key={dObj.iso}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDateObj(dObj);
+                    setSelectedDate(dObj.label);
+                  }}
+                  className={`btn btn-sm ${selectedDateObj?.iso === dObj.iso ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.74rem', padding: '3px 8px', borderRadius: '6px' }}
+                >
+                  {dObj.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Doctor Cards Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '18px' }}>
-            {filteredPageDoctors.map((doc) => (
-              <div key={doc.id} className="glass-panel" style={{ padding: '22px' }}>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
-                  <div style={{
-                    width: '46px',
-                    height: '46px',
-                    borderRadius: '12px',
-                    background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '18px',
-                    fontWeight: 700
-                  }}>
-                    👨‍⚕️
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700 }}>{doc.name}</h3>
-                    <span style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600 }}>{doc.specialty}</span>
-                  </div>
-                </div>
+          {loadingDoctors ? (
+            <div className="glass-panel" style={{ padding: '36px', textAlign: 'center' }}>
+              <span className="spinner" style={{ marginRight: '8px' }} />
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>Loading verified medical staff from clinic database...</span>
+            </div>
+          ) : filteredPageDoctors.length === 0 ? (
+            <div className="glass-panel" style={{ padding: '36px', textAlign: 'center' }}>
+              <Stethoscope size={36} style={{ color: '#6366f1', margin: '0 auto 12px' }} />
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '6px' }}>
+                No Physicians Found
+              </h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', maxWidth: '420px', margin: '0 auto 14px' }}>
+                {selectedSpecialty !== 'all'
+                  ? `There are no doctors registered under "${selectedSpecialty}". Try selecting "All Specialties" to view all available physicians.`
+                  : 'No active doctors are currently registered in the clinic roster. Please check back soon or contact front desk reception.'}
+              </p>
+              {selectedSpecialty !== 'all' && (
+                <button onClick={() => setSelectedSpecialty('all')} className="btn btn-secondary btn-sm">
+                  View All Doctors
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: '18px' }}>
+              {filteredPageDoctors.map((doc) => {
+                const docId = doc._id || doc.id;
+                const docLiveSlots = cardSlotsMap[docId] || [];
 
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                    <MapPin size={14} /> <span>{doc.location}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Stethoscope size={14} /> <span>{doc.experience} • Rating {doc.rating} ★</span>
-                  </div>
-                </div>
+                return (
+                  <div key={docId} className="glass-panel" style={{ padding: '22px' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
+                      <div style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: '12px',
+                        background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
+                        color: 'white',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '18px',
+                        fontWeight: 700
+                      }}>
+                        👨‍⚕️
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {doc.name}
+                        </h3>
+                        <span style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 700 }}>
+                          {doc.specialty}
+                        </span>
+                      </div>
+                    </div>
 
-                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                      Available Slots:
-                    </span>
-                    <button
-                      onClick={() => handlePageDoctorOrSlotClick(doc)}
-                      style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                    >
-                      Book Flow →
-                    </button>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <MapPin size={14} style={{ color: '#6366f1', flexShrink: 0 }} />
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {doc.location}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Stethoscope size={14} style={{ color: '#059669', flexShrink: 0 }} />
+                        <span>{doc.experience} • Rating {doc.rating} ★</span>
+                      </div>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                          Available ({selectedDateObj?.label || 'Today'}):
+                        </span>
+                        <button
+                          onClick={() => handlePageDoctorOrSlotClick(doc)}
+                          style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: '0.76rem', fontWeight: 800, cursor: 'pointer', padding: 0 }}
+                        >
+                          Book Flow →
+                        </button>
+                      </div>
+
+                      {loadingCardSlots ? (
+                        <div style={{ fontSize: '0.76rem', color: '#94a3b8', padding: '6px 0' }}>
+                          <span className="spinner" style={{ marginRight: '6px' }} /> Checking open slots...
+                        </div>
+                      ) : docLiveSlots.length > 0 ? (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {docLiveSlots.slice(0, 5).map((slotObj) => (
+                            <button
+                              key={slotObj._id}
+                              onClick={() => handlePageDoctorOrSlotClick(doc, slotObj)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ fontSize: '0.76rem', padding: '5px 8px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title={`Reserve ${slotObj.startTime} - ${slotObj.endTime}`}
+                            >
+                              <Clock size={11} />
+                              <span>{slotObj.startTime}</span>
+                            </button>
+                          ))}
+                          {docLiveSlots.length > 5 && (
+                            <button
+                              onClick={() => handlePageDoctorOrSlotClick(doc)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ fontSize: '0.74rem', padding: '5px 8px', color: '#4f46e5', fontWeight: 800 }}
+                            >
+                              +{docLiveSlots.length - 5} more
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '6px 10px', borderRadius: '8px', border: '1px dashed #e2e8f0' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>No open slots on this date</span>
+                          <button
+                            onClick={() => handlePageDoctorOrSlotClick(doc)}
+                            style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                          >
+                            Other Dates →
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {doc.slots.map((slot) => (
-                      <button
-                        key={slot}
-                        onClick={() => handlePageDoctorOrSlotClick(doc, slot)}
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.78rem', padding: '5px 10px' }}
-                      >
-                        {slot}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
       </div>
@@ -1290,7 +1628,7 @@ export default function DashboardPage() {
                     Filter Specialty:
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {['all', 'General', 'Cardiologist', 'Pediatrician', 'Dental', 'Gynecologist'].map((filter) => (
+                    {availableSpecialties.map((filter) => (
                       <button
                         key={filter}
                         type="button"
@@ -1308,6 +1646,7 @@ export default function DashboardPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '340px', overflowY: 'auto', paddingRight: '4px', marginBottom: '20px' }}>
                   {filteredModalDoctors.map((doc) => {
                     const isSelected = selectedDoctor?.id === doc.id;
+                    const docLiveCount = cardSlotsMap[doc._id || doc.id]?.length;
                     return (
                       <div
                         key={doc.id}
@@ -1360,7 +1699,7 @@ export default function DashboardPage() {
 
                         <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '8px' }}>
                           <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                            {doc.slots.length} consultation slots available
+                            {docLiveCount !== undefined ? `${docLiveCount} open slots` : 'Available for booking'} on {selectedDateObj?.label || 'selected date'}
                           </span>
                           <button
                             type="button"
@@ -1436,15 +1775,18 @@ export default function DashboardPage() {
                     1. Select Consultation Date:
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                    {availableDates.map((date) => (
+                    {dateOptions.map((dateObj) => (
                       <button
-                        key={date}
+                        key={dateObj.iso}
                         type="button"
-                        onClick={() => setSelectedDate(date)}
-                        className={`btn btn-sm ${selectedDate === date ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => {
+                          setSelectedDateObj(dateObj);
+                          setSelectedDate(dateObj.label);
+                        }}
+                        className={`btn btn-sm ${selectedDateObj?.iso === dateObj.iso ? 'btn-primary' : 'btn-secondary'}`}
                         style={{ fontSize: '0.8rem', padding: '8px 10px', textAlign: 'center' }}
                       >
-                        <Calendar size={13} /> {date}
+                        <Calendar size={13} /> {dateObj.label}
                       </button>
                     ))}
                   </div>
@@ -1455,33 +1797,47 @@ export default function DashboardPage() {
                   <label className="form-label" style={{ fontWeight: 700, marginBottom: '6px' }}>
                     2. Select Available Time Slot:
                   </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(105px, 1fr))', gap: '8px' }}>
-                    {selectedDoctor?.slots.map((slot) => {
-                      const isSelected = selectedSlot === slot;
-                      return (
-                        <button
-                          key={slot}
-                          type="button"
-                          onClick={() => setSelectedSlot(slot)}
-                          className={`btn btn-sm ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
-                          style={{
-                            fontSize: '0.82rem',
-                            padding: '8px 6px',
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '4px',
-                            boxShadow: isSelected ? '0 4px 10px rgba(79, 70, 229, 0.25)' : 'none'
-                          }}
-                        >
-                          <Clock size={13} />
-                          <span>{slot}</span>
-                          {isSelected && <Check size={13} />}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {loadingSlots ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <span className="spinner" style={{ marginRight: '8px' }} /> Checking open clinic slots from database...
+                    </div>
+                  ) : availableSlots.length > 0 ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '8px' }}>
+                      {availableSlots.map((slotObj) => {
+                        const isSelected = selectedSlot && (selectedSlot._id === slotObj._id || selectedSlot.id === slotObj._id);
+                        return (
+                          <button
+                            key={slotObj._id}
+                            type="button"
+                            onClick={() => setSelectedSlot(slotObj)}
+                            className={`btn btn-sm ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                              fontSize: '0.82rem',
+                              padding: '8px 6px',
+                              fontWeight: 700,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              boxShadow: isSelected ? '0 4px 10px rgba(79, 70, 229, 0.25)' : 'none'
+                            }}
+                          >
+                            <Clock size={13} />
+                            <span>{slotObj.startTime}</span>
+                            {isSelected && <Check size={13} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '12px', fontSize: '0.84rem' }}>
+                      <Calendar size={22} style={{ color: '#94a3b8', margin: '0 auto 8px', display: 'block' }} />
+                      <div style={{ fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px' }}>
+                        No Open Consultation Slots
+                      </div>
+                      All slots for {selectedDoctor?.name || 'this doctor'} on {selectedDateObj?.label || 'this date'} are fully booked or not scheduled. Please choose another date above.
+                    </div>
+                  )}
                 </div>
 
                 {/* Bottom Navigation */}
@@ -1532,7 +1888,7 @@ export default function DashboardPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.8rem', borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
                     <div>
                       <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Time & Date:</span>
-                      <strong style={{ color: '#4f46e5' }}>{selectedDate} • {selectedSlot}</strong>
+                      <strong style={{ color: '#4f46e5' }}>{selectedDate} • {getSlotDisplayString(selectedSlot)}</strong>
                     </div>
                     <div>
                       <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Patient Name:</span>

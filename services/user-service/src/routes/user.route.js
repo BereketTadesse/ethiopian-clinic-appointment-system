@@ -3,14 +3,14 @@ import { createUser , verifyEmail,loginUser ,logoutUser, refreshAccessToken, tes
     ,changePassword,uploadProfile,updateProfile,createPatientProfile,getProfileById,requestEmailUpdate,
     confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById,createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember,
     createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-    createReceptionist, getReceptionists, toggleReceptionistStatus
+    createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor
 } from '../controllers/user.controller.js';
 import { protect , authorizeAdmin } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 import {authRateLimiter, generalRateLimiter} from '../middleware/rateLimiter.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, changePasswordSchema } from '../validations/auth.validation.js';
-import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema, createReceptionistSchema } from '../validations/profile.validation.js';
+import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema, createReceptionistSchema, createDoctorSchema } from '../validations/profile.validation.js';
 import {
   createFamilyMemberSchema,
   updateFamilyMemberSchema,
@@ -49,6 +49,9 @@ router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, validate(ge
 router.post('/admin/receptionist', protect, authorizeAdmin, generalRateLimiter, validate(createReceptionistSchema), createReceptionist);
 router.get('/admin/receptionists', protect, authorizeAdmin, generalRateLimiter, getReceptionists);
 router.patch('/admin/receptionists/:id/toggle', protect, authorizeAdmin, generalRateLimiter, toggleReceptionistStatus);
+
+// Admin-only doctor onboarding (doctors cannot self-register)
+router.post('/admin/doctor', protect, authorizeAdmin, generalRateLimiter, validate(createDoctorSchema), createDoctor);
 
 
 // Family Member routes

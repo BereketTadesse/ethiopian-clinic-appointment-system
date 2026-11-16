@@ -75,7 +75,7 @@ const doctorSchema = new mongoose.Schema(
         },
         status: {
           type: String,
-          enum: ['pending', 'approved', 'rejected', 'cancelled'],
+          enum: ['pending', 'approved', 'rejected', 'cancelled', 'terminated'],
           default: 'pending' // When doctor submits, it starts as 'pending' for admin review
         },
         adminNotes: {
@@ -89,6 +89,18 @@ const doctorSchema = new mongoose.Schema(
         reviewedAt: {
           type: Date,
           default: null
+        },
+        terminatedAt: {
+          type: Date,
+          default: null
+        },
+        terminatedBy: {
+          type: String,
+          default: null
+        },
+        terminationReason: {
+          type: String,
+          default: ''
         },
         createdAt: {
           type: Date,

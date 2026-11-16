@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
+import { appointmentApi, clinicApi } from '@/lib/api';
 import {
   Stethoscope,
   Calendar,
@@ -242,6 +243,46 @@ export default function DoctorDashboardPage() {
     }
   ]);
 
+  // Fetch Today's Queue from appointment-service
+  const fetchDoctorQueue = async () => {
+    try {
+      const res = await appointmentApi.get('/appointments/my-queue');
+      if (res.data?.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        const mapped = res.data.data.map(item => ({
+          id: item._id,
+          _id: item._id,
+          patientName: item.patientName || 'Registered Patient',
+          relationship: item.forPerson || 'Patient',
+          gender: 'unspecified',
+          age: 30,
+          phoneNumber: '+251 9XX XXX XXX',
+          nationalId: 'ET-FAYDA-VERIFIED',
+          cardNumber: item.cardNumber,
+          queueNumber: item.queueNumber,
+          slot: `${item.startTime} - ${item.endTime}`,
+          date: item.date || 'Today',
+          status: item.status === 'scheduled' ? 'waiting' : item.status,
+          chiefComplaint: item.reasonForVisit || 'Clinical consultation visit',
+          isPaid: true,
+          bloodType: 'Recorded in file',
+          allergies: [],
+          chronicConditions: [],
+          activeMedications: [],
+          diagnosisHistory: []
+        }));
+        setRegisteredPatients(mapped);
+      }
+    } catch (err) {
+      console.warn('Doctor live queue initial notice:', err?.message);
+    }
+  };
+
+  useEffect(() => {
+    if (mounted && user) {
+      fetchDoctorQueue();
+    }
+  }, [mounted, user]);
+
   // Update Status of Consultation
   const handleUpdateStatus = (patientId, newStatus) => {
     setRegisteredPatients(prev =>
@@ -250,25 +291,67 @@ export default function DoctorDashboardPage() {
   };
 
   // Open Full Patient Chart Modal
-  const openPatientChart = (patient) => {
+  const openPatientChart = async (patient) => {
     setActivePatientModal(patient);
     setChartActiveTab('history');
     setNewDiagnosis('');
     setClinicalNotes('');
     setPrescribedMedication('');
     setSaveSuccessMsg('');
+
+    // Fetch full appointment detail & card history if valid backend ID
+    const aptId = patient._id || patient.id;
+    if (aptId && !aptId.startsWith('apt-20')) {
+      try {
+        const res = await appointmentApi.get(`/appointments/${aptId}`);
+        if (res.data?.success && res.data.data) {
+          const { cardHistory } = res.data.data;
+          if (Array.isArray(cardHistory) && cardHistory.length > 0) {
+            const mappedHistory = cardHistory.map(h => ({
+              id: h._id,
+              date: h.date,
+              doctorName: user?.name || 'Attending Physician',
+              clinic: clinicName || 'CareSync Central Clinic',
+              diagnosis: h.reasonForVisit || 'Consultation Visit',
+              symptoms: h.reasonForVisit || 'General Medical Evaluation',
+              notes: h.doctorNotes || 'Consultation completed.',
+              prescriptions: h.prescription ? [h.prescription] : ['Hydration and supportive care advised']
+            }));
+            setActivePatientModal(prev => ({
+              ...prev,
+              diagnosisHistory: mappedHistory
+            }));
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch past card history from appointment service:', e.message);
+      }
+    }
   };
 
   // Doctor Documents a New Clinical Diagnosis
-  const handleSaveDiagnosis = (e) => {
+  const handleSaveDiagnosis = async (e) => {
     e.preventDefault();
     if (!newDiagnosis.trim()) return;
 
+    const aptId = activePatientModal?._id || activePatientModal?.id;
+    if (aptId && !aptId.startsWith('apt-20')) {
+      try {
+        await appointmentApi.patch(`/appointments/${aptId}/complete`, {
+          doctorNotes: `${newDiagnosis.trim()}. ${clinicalNotes.trim()}`.trim(),
+          prescription: prescribedMedication.trim() || 'Supportive care advised',
+          followUpDate: null
+        });
+      } catch (err) {
+        console.warn('Could not complete appointment in appointment-service:', err.message);
+      }
+    }
+
     const newDxEntry = {
       id: `dx-${Date.now()}`,
-      date: 'Today, Oct 13, 2026',
+      date: 'Today',
       doctorName: user?.name || 'Dr. Selamawit Bekele',
-      clinic: 'CareSync Central Clinic - Bole Branch',
+      clinic: clinicName || 'CareSync Central Clinic - Bole Branch',
       diagnosis: newDiagnosis.trim(),
       symptoms: activePatientModal.chiefComplaint,
       notes: clinicalNotes.trim() || 'Physical examination conducted. Vitals recorded within acceptable parameters.',

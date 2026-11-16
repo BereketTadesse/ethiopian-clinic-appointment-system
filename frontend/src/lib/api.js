@@ -86,6 +86,48 @@ clinicApi.interceptors.response.use(
   }
 );
 
-export { clinicApi as clinicAPI };
+const APPOINTMENT_SERVICE_BASE_URL = process.env.NEXT_PUBLIC_APPOINTMENT_API_URL || 'http://localhost:3003/api';
+
+export const appointmentApi = axios.create({
+  baseURL: APPOINTMENT_SERVICE_BASE_URL,
+  withCredentials: true,
+});
+
+appointmentApi.interceptors.request.use((config) => {
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return config;
+});
+
+appointmentApi.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && !originalRequest._retry && typeof window !== 'undefined') {
+      originalRequest._retry = true;
+      try {
+        const { data } = await axios.post(
+          `${USER_SERVICE_BASE_URL}/users/refresh-token`,
+          {},
+          { withCredentials: true }
+        );
+        if (data.accessToken) {
+          localStorage.setItem('accessToken', data.accessToken);
+          originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
+          return appointmentApi(originalRequest);
+        }
+      } catch (refreshErr) {
+        console.warn('Session expired or unauthorized');
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export { clinicApi as clinicAPI, appointmentApi as appointmentAPI };
 export default API;
 

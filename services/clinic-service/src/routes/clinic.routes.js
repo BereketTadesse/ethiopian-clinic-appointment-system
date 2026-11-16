@@ -11,6 +11,7 @@ import {
   getMyLeaves,
   getAllDoctorLeaveRequests,
   reviewDoctorLeaveRequest,
+  terminateDoctorLeave,
   addDoctorLeave,
   getDoctorLeaves,
   deleteDoctorLeave
@@ -25,6 +26,7 @@ import { protect, authorizeAdmin, authorizeDoctor } from '../middleware/auth.js'
 import upload from '../middleware/upload.js';
 import { 
   getDoctorAvailableSlots, 
+  updateSlotStatus,
   bookslots, 
   releaseSlot, 
   blockSlots, 
@@ -103,20 +105,27 @@ router.patch('/admin/toggleDoctorStatus/:id', protect, authorizeAdmin, toggleDoc
 router.post('/me/leaves', protect, authorizeDoctor, requestDoctorLeave);
 router.get('/me/leaves', protect, authorizeDoctor, getMyLeaves);
 
-// 👑 Admin Role Only: View all doctor leave requests and approve/reject
+// 👑 Admin Role Only: View all doctor leave requests and approve/reject/terminate
 router.get('/admin/doctor-leaves', protect, authorizeAdmin, getAllDoctorLeaveRequests);
 router.patch('/admin/doctor-leaves/:doctorId/:leaveId', protect, authorizeAdmin, reviewDoctorLeaveRequest);
+router.patch('/admin/doctor-leaves/:doctorId/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
+router.post('/admin/doctor-leaves/:doctorId/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
 
-// Doctor specific leave queries / deletions
+// Doctor specific leave queries / deletions / terminations
 router.post('/doctors/:id/leaves', protect, addDoctorLeave);
 router.get('/doctors/:id/leaves', protect, getDoctorLeaves);
 router.delete('/doctors/:id/leaves/:leaveId', protect, deleteDoctorLeave);
+router.patch('/doctors/:id/leaves/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
 
 // ============================================================
 // ⏰ SLOTS & INVENTORY MANAGEMENT
 // ============================================================
-// Public route for patients browsing available doctor slots
+// Public route for patients browsing available doctor slots (supports /slots?doctorId=... or /:id/slots)
+router.get('/slots', getDoctorAvailableSlots);
 router.get('/:id/slots', getDoctorAvailableSlots);
+
+// Slot status management (direct inter-service bridge for lock & release)
+router.patch('/slots/:id/status', protect, updateSlotStatus);
 
 // Booking, releasing & blocking
 router.post('/bookslots', protect, bookslots);

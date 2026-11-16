@@ -36,7 +36,10 @@ export const protect = async (req, res, next) => {
 
   try {
     // 3. Cryptographically decode and verify using unified JWT access secret
-    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'care-sync-ethiopia-fallback-access-secret-2026';
+    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+    if (!accessSecret) {
+      return res.status(500).json({ success: false, message: 'Server authentication configuration error.' });
+    }
     const decoded = jwt.verify(token, accessSecret);
 
     // 4. THE REDIS BLACKLIST BARRIER: Check if this specific token session was destroyed on logout

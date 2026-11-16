@@ -42,7 +42,9 @@ services:
       - PORT=3001
       - USER_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_user_db
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET environment variable is required}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-${JWT_SECRET}}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-${JWT_SECRET}}
       - JWT_EXPIRE=${JWT_EXPIRE:-7d}
       - CLINIC_SERVICE_URL=http://clinic-service:3002
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
@@ -74,7 +76,8 @@ services:
       - CLINIC_PORT=3002
       - CLINIC_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_clinic_db
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET environment variable is required}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-${JWT_SECRET}}
       - USER_SERVICE_URL=http://user-service:3001
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     depends_on:
@@ -99,7 +102,8 @@ services:
       - PORT=3003
       - APPOINTMENT_SERVICE_MONGO_URI=mongodb://mongo:27017/clinic_appointment_db
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-ethiopian_clinic_default_jwt_secret_change_me_32chars}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET environment variable is required}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-${JWT_SECRET}}
       - USER_SERVICE_URL=http://user-service:3001
       - CLINIC_SERVICE_URL=http://clinic-service:3002
     depends_on:

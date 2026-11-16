@@ -1,0 +1,1180 @@
+{
+  "info": {
+    "name": "Clinic - User Service",
+    "description": "User Service (port 3001). Auth, profiles, family members, admin user management.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0. Login (run first)",
+      "description": "Run one of these first. The token is stored in the collection variable {{token}} and used by every request.",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@clinic.et\",\n  \"password\": \"Admin@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Doctor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"doctor.abebe@clinic.et\",\n  \"password\": \"Doctor@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Saves accessToken into {{token}} automatically. Seed credentials from scripts/seed.js.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient.almaz@gmail.com\",\n  \"password\": \"Patient@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth & Account",
+      "description": "",
+      "item": [
+        {
+          "name": "Register (patient)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/register",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "Public signup always creates a patient. Sending role: \"admin\" is rejected.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Patient\",\n  \"email\": \"test.patient@example.com\",\n  \"password\": \"Password123\",\n  \"phoneNumber\": \"0911000000\",\n  \"gender\": \"female\",\n  \"address\": \"Bole, Addis Ababa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register as admin (should FAIL 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/register",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "Security check for fix #1: must return 400.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sneaky Admin\",\n  \"email\": \"sneaky@example.com\",\n  \"password\": \"Password123\",\n  \"phoneNumber\": \"0911000001\",\n  \"gender\": \"male\",\n  \"address\": \"Bole, Addis Ababa\",\n  \"role\": \"admin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/login",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient.almaz@gmail.com\",\n  \"password\": \"Patient@123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/verify/:token",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "verify",
+                ":token"
+              ]
+            },
+            "description": "Replace :token with the token from the verification email.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Refresh access token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/refresh-token",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "refresh-token"
+              ]
+            },
+            "description": "Uses the refreshToken HttpOnly cookie set by login.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.accessToken) {",
+                  "  pm.collectionVariables.set(\"token\", res.accessToken);",
+                  "  if (res.user && res.user._id) pm.collectionVariables.set(\"myUserId\", res.user._id);",
+                  "  console.log(\"Saved token for role:\", res.user && res.user.role);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/logout",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "logout"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/forgot-password",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "forgot-password"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient.almaz@gmail.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/reset-password/:token",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "reset-password",
+                ":token"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"NewPassword123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/change-password",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "change-password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"oldPassword\": \"Patient@123456\",\n  \"newPassword\": \"NewPassword123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete my account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/delete-me",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "delete-me"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Debug: test tokens",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/test-tokens",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "test-tokens"
+              ]
+            },
+            "description": "Debug route (security gap #8)."
+          }
+        },
+        {
+          "name": "Debug: check refresh token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/check-refresh-token",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "check-refresh-token"
+              ]
+            },
+            "description": "Debug route (security gap #8).",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "description": "",
+      "item": [
+        {
+          "name": "Get profile by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/profile/{{myUserId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "profile",
+                "{{myUserId}}"
+              ]
+            },
+            "description": "Try another user's ID here to test security gap #3."
+          }
+        },
+        {
+          "name": "Create patient profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/patient-profile",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "patient-profile"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodType\": \"O+\",\n  \"allergies\": [\n    \"Penicillin\"\n  ],\n  \"emergencyContact\": {\n    \"name\": \"Abebe Kebede\",\n    \"phoneNumber\": \"0911223344\",\n    \"relationship\": \"Brother\"\n  },\n  \"medicalHistory\": [\n    {\n      \"date\": \"2024-05-10\",\n      \"description\": \"Malaria treatment\"\n    }\n  ],\n  \"medications\": [\n    {\n      \"name\": \"Paracetamol\",\n      \"dosage\": \"500mg\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update profile (JSON)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/update-profile",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "update-profile"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Almaz Tesfaye\",\n  \"phoneNumber\": \"0911223355\",\n  \"address\": \"Kazanchis, Addis Ababa\",\n  \"birthDate\": \"1995-03-12\",\n  \"bloodType\": \"O+\",\n  \"allergies\": [\n    \"Penicillin\"\n  ],\n  \"emergencyContact\": {\n    \"name\": \"Abebe Kebede\",\n    \"phoneNumber\": \"0911223344\",\n    \"relationship\": \"Brother\"\n  },\n  \"medicalHistory\": [\n    {\n      \"date\": \"2024-05-10\",\n      \"description\": \"Malaria treatment\"\n    }\n  ],\n  \"medications\": [\n    {\n      \"name\": \"Paracetamol\",\n      \"dosage\": \"500mg\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Upload profile picture",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/upload-profile",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "upload-profile"
+              ]
+            },
+            "description": "Select an image file for profilePicture.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "profilePicture",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Request email update",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/request-email-update",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "request-email-update"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newEmail\": \"new.email@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Confirm email update",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/confirm-email-update/:token",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "confirm-email-update",
+                ":token"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Public doctor account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/public-doctor-account/{{doctorUserId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "public-doctor-account",
+                "{{doctorUserId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Family Members",
+      "description": "",
+      "item": [
+        {
+          "name": "Create family member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/createFamilyMember",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "createFamilyMember"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Liya Tesfaye\",\n  \"dateOfBirth\": \"2015-09-01\",\n  \"gender\": \"female\",\n  \"relationship\": \"daughter\",\n  \"phoneNumber\": null,\n  \"nationalId\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const id = (res.member && res.member._id) || (res.data && res.data._id);",
+                  "if (id) pm.collectionVariables.set(\"familyMemberId\", id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get all family members",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/getAllFamilyMembers",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "getAllFamilyMembers"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Get one family member",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/getOneFamilyMember/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "getOneFamilyMember",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Update family member",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/updateFamilyMember/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "updateFamilyMember",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Liya T. Tesfaye\",\n  \"relationship\": \"daughter\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete family member",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/deleteFamilyMember/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "deleteFamilyMember",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Create family member profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/family-member-profile/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "family-member-profile",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodType\": \"O+\",\n  \"allergies\": [\n    \"Penicillin\"\n  ],\n  \"emergencyContact\": {\n    \"name\": \"Abebe Kebede\",\n    \"phoneNumber\": \"0911223344\",\n    \"relationship\": \"Brother\"\n  },\n  \"medicalHistory\": [\n    {\n      \"date\": \"2024-05-10\",\n      \"description\": \"Malaria treatment\"\n    }\n  ],\n  \"medications\": [\n    {\n      \"name\": \"Paracetamol\",\n      \"dosage\": \"500mg\"\n    }\n  ],\n  \"chronicConditions\": [\n    \"Asthma\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get family member profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/family-member-profile/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "family-member-profile",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Update family member profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/family-member-profile/{{familyMemberId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "family-member-profile",
+                "{{familyMemberId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodType\": \"A+\",\n  \"allergies\": [\n    \"Peanuts\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Login as Admin first.",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/getUsers?page=1&limit=10&role=patient&search=",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "getUsers"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "role",
+                  "value": "patient"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Admin only."
+          }
+        },
+        {
+          "name": "Update user status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/admin/update-user-status/{{targetUserId}}",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "admin",
+                "update-user-status",
+                "{{targetUserId}}"
+              ]
+            },
+            "description": "status: active | suspended | banned",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\",\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create receptionist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/admin/receptionist",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "admin",
+                "receptionist"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Hana Girma\",\n  \"email\": \"hana.reception@clinic.et\",\n  \"phoneNumber\": \"0911555666\",\n  \"password\": \"Reception123\",\n  \"gender\": \"female\",\n  \"address\": \"Addis Ababa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create doctor (account + clinic profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/admin/doctor",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "admin",
+                "doctor"
+              ]
+            },
+            "description": "Admin only. The ONLY way to create a doctor. Creates the login account and the clinic-service doctor profile in one step (rolled back if the clinic step fails). Needs clinic-service running.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Dr. Selam Haile\",\n  \"email\": \"selam.haile@clinic.et\",\n  \"phoneNumber\": \"0911777888\",\n  \"password\": \"Doctor12345\",\n  \"gender\": \"female\",\n  \"address\": \"Addis Ababa\",\n  \"specialization\": \"Pediatrics\",\n  \"licenseNumber\": \"ETH-MED-2026-777\",\n  \"yearsOfExperience\": 7,\n  \"bio\": \"Pediatrician with 7 years experience\",\n  \"availableDays\": [\n    \"Monday\",\n    \"Wednesday\",\n    \"Friday\"\n  ],\n  \"startTime\": \"08:30\",\n  \"endTime\": \"17:00\",\n  \"breakStart\": \"12:30\",\n  \"breakEnd\": \"13:30\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.user) pm.collectionVariables.set(\"doctorUserId\", res.data.user._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List receptionists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/admin/receptionists",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "admin",
+                "receptionists"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Toggle receptionist status",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/admin/receptionists/{{targetUserId}}/toggle",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "admin",
+                "receptionists",
+                "{{targetUserId}}",
+                "toggle"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "userBaseUrl",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "myUserId",
+      "value": ""
+    },
+    {
+      "key": "targetUserId",
+      "value": ""
+    },
+    {
+      "key": "familyMemberId",
+      "value": ""
+    },
+    {
+      "key": "doctorUserId",
+      "value": ""
+    }
+  ]
+}

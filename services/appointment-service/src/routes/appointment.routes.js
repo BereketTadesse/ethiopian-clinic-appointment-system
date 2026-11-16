@@ -3,28 +3,35 @@ import {
   bookAppointment,
   getMyAppointments,
   getAppointmentHistory,
-  cancelAppointment,
+  cancelAppointmentUnified,
   getDoctorQueue,
   completeAppointment,
   getAppointmentDetail,
-  getAllAppointmentsAdmin,
-  adminCancelAppointmentHandler
+  getAllAppointmentsAdmin
 } from '../controllers/appointment.controller.js';
-import { protect, authorizePatient, authorizeDoctor, authorizeAdmin, authorizeStaff } from '../middleware/auth.js';
+import {
+  protect,
+  authorizePatient,
+  authorizeDoctor,
+  authorizeStaff,
+  authorizePatientOrStaff
+} from '../middleware/auth.js';
 
 const router = express.Router();
 
 // ── Staff (Admin & Front-Desk Receptionist) Routes ─────────────
 // ⚠️ Staff GET / must come BEFORE patient GET /my-appointments etc.
 router.get('/', protect, authorizeStaff, getAllAppointmentsAdmin);
-router.patch('/:id/cancel', protect, authorizeStaff, adminCancelAppointmentHandler);
 
+// ── Booking Routes (Patient Self-Service & Front-Desk Walk-in) ──
+router.post('/', protect, authorizePatientOrStaff, bookAppointment);
 
 // ── Patient Routes ────────────────────────────────────────────
-router.post('/', protect, authorizePatient, bookAppointment);
 router.get('/my-appointments', protect, authorizePatient, getMyAppointments);
 router.get('/history', protect, authorizePatient, getAppointmentHistory);
-router.patch('/:appointmentId/cancel', protect, authorizePatient, cancelAppointment);
+
+// ── Cancellation Route (Unified for Patient & Staff) ──────────
+router.patch('/:id/cancel', protect, cancelAppointmentUnified);
 
 // ── Doctor Routes ─────────────────────────────────────────────
 // ⚠️ /my-queue must come BEFORE /:id to avoid route conflict

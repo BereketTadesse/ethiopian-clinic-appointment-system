@@ -34,8 +34,13 @@ export default function Sidebar({ isOpen, onClose }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTabQuery, setActiveTabQuery] = useState(searchParams?.get('tab') || '');
-  const { user, logout, mounted } = useAuth();
+  const { user, logout } = useAuth();
   const { clinicName, clinicLogo } = useClinic();
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     setActiveTabQuery(searchParams?.get('tab') || '');
@@ -631,10 +636,23 @@ export default function Sidebar({ isOpen, onClose }) {
           style={{
             padding: '14px 16px',
             borderTop: '1px solid #f1f5f9',
-            background: '#fafbfc'
+            background: '#fafbfc',
+            minHeight: '66px'
           }}
+          suppressHydrationWarning
         >
-          {mounted && user ? (
+          {!isMounted ? (
+            <div style={{ height: '36px', display: 'flex', alignItems: 'center' }} suppressHydrationWarning>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: '#f1f5f9'
+                }}
+              />
+            </div>
+          ) : user ? (
             <div
               style={{
                 display: 'flex',

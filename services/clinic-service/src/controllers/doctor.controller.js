@@ -1,6 +1,8 @@
 
 import Doctor from '../models/doctor.model.js';
 import Slot from '../models/slot.model.js';
+import Holiday from '../models/holiday.model.js';
+import { generateSlotsForDoctor } from '../utils/slotGenerator.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
@@ -549,17 +551,145 @@ const getAllDoctorLeaveRequests = async (req, res) => {
   }
 };
 
+// 👑 ADMIN ONLY: Terminate an approved (or active) doctor leave and restore schedule & slots
+const terminateDoctorLeave = async (req, res) => {
+  try {
+    const doctorId = req.params.doctorId || req.params.id;
+    const { leaveId } = req.params;
+    const { adminNotes, reason, regenerateSlots = true } = req.body;
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor profile not found.' });
+    }
+
+    const leave = doctor.leaves.id(leaveId);
+    if (!leave) {
+      return res.status(404).json({ success: false, message: 'Leave request not found on this doctor profile.' });
+    }
+
+    if (leave.status === 'terminated') {
+      return res.status(400).json({
+        success: false,
+        message: 'This leave has already been terminated.'
+      });
+    }
+
+    if (leave.status === 'rejected') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot terminate a leave that was already rejected.'
+      });
+    }
+
+    const previousStatus = leave.status;
+    const adminUser = req.user?.id || 'admin';
+    const note = adminNotes || reason || 'Leave terminated early by administrator';
+
+    leave.status = 'terminated';
+    leave.terminatedAt = new Date();
+    leave.terminatedBy = adminUser;
+    leave.terminationReason = note;
+    leave.adminNotes = leave.adminNotes 
+      ? `${leave.adminNotes} | [Terminated by Admin: ${note}]`
+      : `Terminated by administrator: ${note}`;
+    leave.reviewedBy = adminUser;
+    leave.reviewedAt = new Date();
+
+    await doctor.save();
+    console.log(`🛑 [Leave Terminated] Admin terminated ${previousStatus} leave for Doctor ${doctorId} (Original period: ${leave.startDate} to ${leave.endDate}).`);
+
+    // Slot regeneration for the restored period
+    let regeneratedDates = [];
+    if (regenerateSlots && doctor.isActive && doctor.isAcceptingPatients) {
+      // Calculate current date in Ethiopian time (UTC+3)
+      const systemDate = new Date();
+      const targetTime = systemDate.getTime() + (systemDate.getTimezoneOffset() * 60000) + (3 * 3600000);
+      const localNow = new Date(targetTime);
+      const todayStr = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
+
+      const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+      // Start generation from max(todayStr, leave.startDate) up to leave.endDate (capped at 14 days ahead)
+      const startStr = leave.startDate > todayStr ? leave.startDate : todayStr;
+      const endStr = leave.endDate;
+
+      let current = new Date(startStr);
+      const endLimit = new Date(endStr);
+      // Hard cap at 14 days from today
+      const maxDate = new Date(localNow);
+      maxDate.setDate(maxDate.getDate() + 14);
+      const finalEnd = endLimit < maxDate ? endLimit : maxDate;
+
+      while (current <= finalEnd) {
+        const y = current.getFullYear();
+        const m = String(current.getMonth() + 1).padStart(2, '0');
+        const d = String(current.getDate()).padStart(2, '0');
+        const dateStr = `${y}-${m}-${d}`;
+        const dayName = daysOfWeek[current.getDay()];
+
+        // Check if doctor works on this day of week
+        const worksOnDay = doctor.availableDays?.some(
+          day => day.toLowerCase() === dayName.toLowerCase()
+        );
+
+        if (worksOnDay) {
+          // Check holiday
+          const holiday = await Holiday.findOne({ date: dateStr, isClosed: true });
+          // Check if doctor has any OTHER active approved leave covering this day
+          const hasOtherApprovedLeave = doctor.leaves?.some(
+            l => l.status === 'approved' && l._id.toString() !== leaveId && dateStr >= l.startDate && dateStr <= l.endDate
+          );
+
+          if (!holiday && !hasOtherApprovedLeave) {
+            try {
+              await generateSlotsForDoctor(doctor, dateStr);
+              regeneratedDates.push(dateStr);
+            } catch (slotErr) {
+              console.warn(`Could not regenerate slots for Doctor ${doctorId} on ${dateStr}:`, slotErr.message);
+            }
+          }
+        }
+
+        current.setDate(current.getDate() + 1);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Doctor leave terminated successfully. Doctor schedule restored${regeneratedDates.length > 0 ? ` and slots regenerated for ${regeneratedDates.length} day(s) (${regeneratedDates.join(', ')})` : ''}.`,
+      data: {
+        leave,
+        previousStatus,
+        regeneratedDatesCount: regeneratedDates.length,
+        regeneratedDates
+      }
+    });
+  } catch (error) {
+    console.error('Error terminating doctor leave:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to terminate doctor leave',
+      error: error.message
+    });
+  }
+};
+
 // 👑 ADMIN ONLY: Approve or Reject a doctor's leave request
 const reviewDoctorLeaveRequest = async (req, res) => {
   try {
     const { doctorId, leaveId } = req.params;
     const { status, adminNotes } = req.body;
 
-    if (!['approved', 'rejected'].includes(status)) {
+    if (!['approved', 'rejected', 'terminated'].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Must be either "approved" or "rejected".'
+        message: 'Invalid status. Must be "approved", "rejected", or "terminated".'
       });
+    }
+
+    if (status === 'terminated') {
+      return terminateDoctorLeave(req, res);
     }
 
     const doctor = await Doctor.findById(doctorId);
@@ -796,6 +926,7 @@ export {
   getMyLeaves,
   getAllDoctorLeaveRequests,
   reviewDoctorLeaveRequest,
+  terminateDoctorLeave,
   addDoctorLeave,
   getDoctorLeaves,
   deleteDoctorLeave

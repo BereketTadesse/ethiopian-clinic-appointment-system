@@ -110,3 +110,38 @@ export const createReceptionistSchema = z.object({
   }),
 });
 
+
+// POST /admin/doctor — admin creates a doctor login account + clinic profile in one step
+const timeHHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be in HH:MM 24-hour format');
+const weekDay = z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+
+export const createDoctorSchema = z.object({
+  body: z.object({
+    // Login account (user-service)
+    name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+    email: z.string().email('Invalid email address'),
+    phoneNumber: z.string().min(9, 'Phone number must be at least 9 characters'),
+    password: z.string()
+      .min(8, 'Password must be at least 8 characters long')
+      .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+      .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+      .regex(/[0-9]/, 'Password must contain at least one number'),
+    gender: z.enum(['male', 'female', 'other']).optional(),
+    address: z.string().optional(),
+    // Clinical profile (clinic-service)
+    specialization: z.string().min(2, 'Specialization is required'),
+    licenseNumber: z.string().min(3, 'License number is required'),
+    yearsOfExperience: z.coerce.number().min(0).max(70).optional(),
+    bio: z.string().max(1000).optional(),
+    availableDays: z.array(weekDay).min(1, 'At least one working day is required'),
+    startTime: timeHHMM,
+    endTime: timeHHMM,
+    breakStart: timeHHMM.optional(),
+    breakEnd: timeHHMM.optional(),
+  })
+    .refine((d) => d.startTime < d.endTime, { message: 'endTime must be after startTime', path: ['endTime'] })
+    .refine((d) => !!d.breakStart === !!d.breakEnd, { message: 'breakStart and breakEnd must be provided together', path: ['breakEnd'] })
+    .refine((d) => !d.breakStart || (d.breakStart < d.breakEnd && d.breakStart >= d.startTime && d.breakEnd <= d.endTime), {
+      message: 'Break must be inside the shift and breakEnd must be after breakStart', path: ['breakStart'],
+    }),
+});

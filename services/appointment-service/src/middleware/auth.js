@@ -2,13 +2,17 @@ import jwt from 'jsonwebtoken';
 
 export const protect = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
     
     if (!token) {
       return res.status(401).json({ message: 'No token provided' });
     }
     
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+    if (!accessSecret) {
+      return res.status(500).json({ message: 'Server authentication configuration error.' });
+    }
+    const decoded = jwt.verify(token, accessSecret);
     req.user = decoded;
     next();
   } catch (error) {
@@ -43,4 +47,19 @@ export const authorizeStaff = (req, res, next) => {
   }
   return res.status(403).json({ message: 'Access denied: Admin or Receptionist role required' });
 };
+
+export const authorizePatientOrStaff = (req, res, next) => {
+  if (['patient', 'admin', 'receptionist'].includes(req.user?.role)) {
+    return next();
+  }
+  return res.status(403).json({ message: 'Access denied: Patient or Staff role required' });
+};
+
+export const authorizeStaffOrDoctor = (req, res, next) => {
+  if (['admin', 'receptionist', 'doctor'].includes(req.user?.role)) {
+    return next();
+  }
+  return res.status(403).json({ message: 'Access denied: Staff or Doctor role required' });
+};
+
 
