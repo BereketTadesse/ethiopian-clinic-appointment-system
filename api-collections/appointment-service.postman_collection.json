@@ -197,10 +197,53 @@
                 "appointments"
               ]
             },
-            "description": "Patient or staff. Staff can add \"patientId\" to book for someone else.",
+            "description": "Patient or staff. Staff must add \"patientId\". Queue number = position in the doctor's day by appointment time.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"date\": \"{{date}}\",\n  \"reasonForVisit\": \"Headache and fever\",\n  \"forPerson\": \"Self\",\n  \"patientName\": \"Almaz Tesfaye\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data._id) { pm.collectionVariables.set(\"appointmentId\", res.data._id); pm.collectionVariables.set(\"cardNumber\", res.data.cardNumber); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book for a family member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/appointments",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "description": "familyMemberId must belong to the logged-in account. The member gets their own card; name/label come from the family record.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"date\": \"{{date}}\",\n  \"familyMemberId\": \"{{familyMemberId}}\",\n  \"reasonForVisit\": \"Fever\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -503,6 +546,48 @@
           }
         },
         {
+          "name": "Family member card",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/me?familyMemberId={{familyMemberId}}",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "me"
+              ],
+              "query": [
+                {
+                  "key": "familyMemberId",
+                  "value": "{{familyMemberId}}"
+                }
+              ]
+            },
+            "description": "Card of one family member on your account."
+          }
+        },
+        {
+          "name": "All cards on my account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{appointmentBaseUrl}}/cards/family",
+              "host": [
+                "{{appointmentBaseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "family"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
           "name": "Update my card",
           "request": {
             "method": "PUT",
@@ -601,6 +686,10 @@
     },
     {
       "key": "appointmentId",
+      "value": ""
+    },
+    {
+      "key": "familyMemberId",
       "value": ""
     },
     {

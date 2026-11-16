@@ -496,45 +496,6 @@
             },
             "description": ""
           }
-        },
-        {
-          "name": "Debug: test tokens",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{userBaseUrl}}/users/test-tokens",
-              "host": [
-                "{{userBaseUrl}}"
-              ],
-              "path": [
-                "users",
-                "test-tokens"
-              ]
-            },
-            "description": "Debug route (security gap #8)."
-          }
-        },
-        {
-          "name": "Debug: check refresh token",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{userBaseUrl}}/users/check-refresh-token",
-              "host": [
-                "{{userBaseUrl}}"
-              ],
-              "path": [
-                "users",
-                "check-refresh-token"
-              ]
-            },
-            "description": "Debug route (security gap #8).",
-            "auth": {
-              "type": "noauth"
-            }
-          }
         }
       ]
     },
@@ -558,7 +519,7 @@
                 "{{myUserId}}"
               ]
             },
-            "description": "Try another user's ID here to test security gap #3."
+            "description": "Patients can only read their own profile (403 otherwise). Doctors, receptionists and admin can read any."
           }
         },
         {
@@ -1018,10 +979,10 @@
                 "{{targetUserId}}"
               ]
             },
-            "description": "status: active | suspended | banned",
+            "description": "Admin. Activate/deactivate an account. Deactivating also ends their session. Role changes are not allowed; the admin cannot deactivate themselves.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"suspended\",\n  \"isActive\": false\n}",
+              "raw": "{\n  \"isActive\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -7,24 +7,31 @@ import {
   getDoctorQueue,
   completeAppointment,
   getAppointmentDetail,
-  getAllAppointmentsAdmin
+  getAllAppointmentsAdmin,
+  cancelUpcomingForDoctorInternal
 } from '../controllers/appointment.controller.js';
 import {
   protect,
   authorizePatient,
   authorizeDoctor,
   authorizeStaff,
-  authorizePatientOrStaff
+  authorizePatientOrStaff,
+  requireInternalService
 } from '../middleware/auth.js';
+import { bookingRateLimit } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
+
+// ── Internal (service-to-service) ──────────────────────────────
+// clinic-service calls this when a doctor is deactivated (Bug 7). Must stay above '/:id' routes.
+router.patch('/internal/doctors/:doctorId/cancel-upcoming', requireInternalService, cancelUpcomingForDoctorInternal);
 
 // ── Staff (Admin & Front-Desk Receptionist) Routes ─────────────
 // ⚠️ Staff GET / must come BEFORE patient GET /my-appointments etc.
 router.get('/', protect, authorizeStaff, getAllAppointmentsAdmin);
 
 // ── Booking Routes (Patient Self-Service & Front-Desk Walk-in) ──
-router.post('/', protect, authorizePatientOrStaff, bookAppointment);
+router.post('/', protect, authorizePatientOrStaff, bookingRateLimit, bookAppointment);
 
 // ── Patient Routes ────────────────────────────────────────────
 router.get('/my-appointments', protect, authorizePatient, getMyAppointments);

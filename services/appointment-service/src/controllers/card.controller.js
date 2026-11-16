@@ -1,13 +1,30 @@
 import * as cardService from '../services/card.service.js';
+import mongoose from 'mongoose';
 import Appointment from '../models/appointment.model.js';
+
+/**
+ * Optional ?familyMemberId= (or body.familyMemberId) selects a family member's card.
+ * Cards are always looked up under the logged-in account, so a patient can only
+ * reach cards of their own family.
+ * @returns null for the account holder, an id string, or false if invalid
+ */
+const familyMemberParam = (req) => {
+  const value = req.query.familyMemberId ?? req.body?.familyMemberId;
+  if (value === undefined || value === null || value === '' || value === 'self') return null;
+  return mongoose.Types.ObjectId.isValid(value) ? String(value) : false;
+};
 
 const getMyCard = async (req, res) => {
   try {
-    const patientId = req.user.id; 
+    const patientId = req.user.id;
     const incomingToken = req.headers.authorization?.split(' ')[1] || null;
+    const familyMemberId = familyMemberParam(req);
+    if (familyMemberId === false) {
+      return res.status(400).json({ success: false, message: 'Invalid familyMemberId.' });
+    }
 
     // Pass token along to authorize inter-service data fetching
-    const card = await cardService.findCardByPatientId(patientId, incomingToken);
+    const card = await cardService.findCardByPatientId(patientId, incomingToken, familyMemberId);
 
     if (!card) {
       return res.status(200).json({
@@ -35,7 +52,12 @@ const updateMyCard = async (req, res) => {
     const patientId = req.user.id;
     const incomingToken = req.headers.authorization?.split(' ')[1] || null;
 
-    const updatedCard = await cardService.updateCardBackground(patientId, req.body, incomingToken);
+    const familyMemberId = familyMemberParam(req);
+    if (familyMemberId === false) {
+      return res.status(400).json({ success: false, message: 'Invalid familyMemberId.' });
+    }
+
+    const updatedCard = await cardService.updateCardBackground(patientId, req.body, incomingToken, familyMemberId);
 
     if (!updatedCard) {
       return res.status(404).json({
@@ -105,4 +127,13 @@ const getCardHistory = async (req, res) => {
   }
 };
 
-export {getMyCard,updateMyCard,getCardByNumber,getCardHistory};
+/**
+ * @desc    All cards on the logged-in account: the holder's own and each family member's
+ * @route   GET /api/cards/family
+ */
+const getFamilyCards = async (req, res) => {
+  const cards = await cardService.findCardsForAccount(req.user.id);
+  return res.status(200).json({ success: true, count: cards.length, data: cards });
+};
+
+export { getMyCard, updateMyCard, getCardByNumber, getCardHistory, getFamilyCards };

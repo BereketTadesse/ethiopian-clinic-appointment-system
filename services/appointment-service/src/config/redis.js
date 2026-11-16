@@ -6,7 +6,7 @@ const redisClient = redisUrl ? createClient({ url: redisUrl }) : null;
 
 if (redisClient) {
   redisClient.on('error', (err) => console.error('❌ Redis Client Error:', err));
-  redisClient.on('connect', () => console.log('☁️ User Service connected to Redis Cache Memory Engine'));
+  redisClient.on('connect', () => console.log('☁️ Appointment Service connected to Redis Cache Memory Engine'));
 }
 
 export default redisClient;

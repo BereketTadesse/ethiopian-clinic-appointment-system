@@ -30,7 +30,6 @@ export const protect = async (req, res, next) => {
       return res.status(500).json({ success: false, message: 'Server authentication configuration error.' });
     }
     const decoded = jwt.verify(token, accessSecret);
-    console.log('✅ Token decoded successfully:', decoded);
 
     // 4. Redis blacklist check
     if (decoded.jti && redisClient) {
@@ -50,19 +49,15 @@ export const protect = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'User record no longer exists.' });
     }
 
+    if (req.user.isActive === false) {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated. Please contact the clinic administrator.' });
+    }
+
     // 6. All good, proceed
     next();
 
   } catch (error) {
-    // 🔍 DEBUG: Decode without verifying to inspect token contents
-    const rawDecoded = jwt.decode(token);
     console.error('❌ Authentication Middleware Error:', error.name, '-', error.message);
-    console.error('🔍 Token payload (unverified):', rawDecoded);
-    console.error('🔍 Error type breakdown:', {
-      isExpired: error.name === 'TokenExpiredError',
-      isMalformed: error.name === 'JsonWebTokenError',
-      isNotBefore: error.name === 'NotBeforeError',
-    });
 
     const message =
       error.name === 'TokenExpiredError'

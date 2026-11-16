@@ -1,93 +1,75 @@
 import './config/loadEnv.js';
-import express from 'express';
-import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import cardRoutes from './routes/card.routes.js';
-import appointmentRoutes from './routes/appointment.routes.js'; // 🚀 Import appointments router
+import mongoose from 'mongoose';
+import app from './app.js';
 import connectDB from './config/db.js';
 import redisClient from './config/redis.js';
-import mongoose from 'mongoose';
-
-const app = express();
-
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://your-clinic-frontend.vercel.app';
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  FRONTEND_URL
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
-}));
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-
-// Main App Mounted Enclave Route Allocations
-app.use('/api/cards', cardRoutes);
-app.use('/api/appointments', appointmentRoutes); // 🚀 Mount the appointments route
+import { initRateLimiters } from './middleware/rateLimiter.js';
+import { runStartupMigrations } from './config/migrations.js';
 
 const PORT = process.env.PORT || 3003;
 let server;
+let shuttingDown = false;
 
 const startServer = async () => {
-	try {
-		await connectDB();
+  try {
+    await connectDB();
+    await runStartupMigrations();
 
-		if (redisClient) {
-			try {
-				await redisClient.connect();
-				console.log('☁️ Appointment Service connected to Redis');
-			} catch (rErr) {
-				console.error('❌ Redis connection failed:', rErr.message || rErr);
-				process.exit(1);
-			}
-		} else {
-			console.log('ℹ️ No Redis configured for this service (REDIS_URL not set)');
-		}
+    if (redisClient) {
+      try {
+        await redisClient.connect();
+        console.log('☁️ Appointment Service connected to Redis');
+      } catch (rErr) {
+        // Redis is optional here: rate limiting falls back to an in-memory store.
+        console.error('❌ Redis connection failed, continuing without it:', rErr.message || rErr);
+      }
+    } else {
+      console.log('ℹ️ No Redis configured for this service (REDIS_URL not set)');
+    }
 
-		server = app.listen(PORT, () => {
-			console.log(`Appointment service listening on port ${PORT}`);
-		});
-	} catch (err) {
-		console.error('Startup failed:', err);
-		process.exit(1);
-	}
+    initRateLimiters();
+
+    server = app.listen(PORT, () => {
+      console.log(`Appointment service listening on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error('Startup failed:', err);
+    process.exit(1);
+  }
 };
 
-startServer();
-
-export default app;
-
-const shutdown = async (signal) => {
-	console.log(`Received ${signal}, shutting down...`);
-	try {
-		if (server) server.close();
-		if (redisClient && redisClient.isOpen) await redisClient.disconnect();
-		if (mongoose.connection && mongoose.connection.readyState === 1) await mongoose.connection.close();
-		process.exit(0);
-	} catch (err) {
-		console.error('Error during shutdown:', err);
-		process.exit(1);
-	}
+/**
+ * Graceful shutdown: stop accepting connections, let in-flight requests finish,
+ * close Redis/Mongo, then exit. Forced exit after 10s if something hangs.
+ */
+const shutdown = async (signal, exitCode = 0) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down gracefully...`);
+  setTimeout(() => process.exit(exitCode || 1), 10_000).unref();
+  try {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (redisClient?.isOpen) await redisClient.quit();
+    if (mongoose.connection.readyState === 1) await mongoose.connection.close();
+  } catch (err) {
+    console.error('Error during shutdown:', err);
+    exitCode = 1;
+  }
+  process.exit(exitCode);
 };
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('unhandledRejection', (err) => {
-	console.error('Unhandled Rejection:', err);
-	shutdown('unhandledRejection');
+
+// A stray rejected promise is a bug to log and fix, not a reason to take every booking offline.
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Unhandled promise rejection (service kept running):', reason);
 });
 
+// After an uncaught exception the process state is unknown: exit cleanly so the platform restarts it.
 process.on('uncaughtException', (err) => {
-	console.error('Uncaught Exception:', err);
-	shutdown('uncaughtException');
+  console.error('🔥 Uncaught exception, restarting:', err);
+  shutdown('uncaughtException', 1);
 });
+
+startServer();

@@ -3,6 +3,8 @@ import path from 'path';
 import express from 'express';
 import connectDB from './config/db.js';
 import cors from 'cors';
+import helmet from 'helmet';
+import { corsOptions } from './config/cors.js';
 import cookieParser from 'cookie-parser';
 import redisClient from './config/redis.js';
 import swaggerUi from 'swagger-ui-express';
@@ -21,26 +23,11 @@ app.set('trust proxy', 1); // ✅ Trust first proxy hop (Docker gateway / Render
 const PORT = process.env.PORT || 3001;
 
 // 1. Global Middleware Layers
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  'http://localhost:3000',
-  'https://your-clinic-frontend.vercel.app'
-].filter(Boolean);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, Postman)
-    if (!origin) return callback(null, true);
-    if (!process.env.FRONTEND_URL || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  credentials: true 
-}));
-
+// Security headers. CSP is disabled because this is a JSON API (and Swagger UI needs inline assets).
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 // 2. 🚀 CRITICAL PROBE CHECK
 app.get('/health', (req, res) => {

@@ -56,20 +56,8 @@ function LoginForm() {
       const res = await login('admin@clinic.et', 'Admin@123456');
       router.push('/admin/dashboard');
     } catch (e) {
-      const demoAdmin = {
-        id: 'admin-01',
-        _id: 'admin-01',
-        name: 'Clinic Administrator & Reception Desk',
-        email: 'admin@clinic.et',
-        phoneNumber: '+251911000001',
-        role: 'admin',
-        gender: 'male',
-        address: 'Bole, Addis Ababa'
-      };
-      localStorage.setItem('user', JSON.stringify(demoAdmin));
-      localStorage.setItem('accessToken', 'mock-admin-token');
-      if (updateUserState) updateUserState(demoAdmin);
-      router.push('/admin/dashboard');
+      // No offline fallback: never fake a session with a mock token.
+      setError(e.response?.data?.message || 'Demo login failed. Make sure the backend is running and the demo accounts are seeded.');
     } finally {
       setSubmitting(false);
     }
@@ -88,23 +76,8 @@ function LoginForm() {
         router.push('/doctor/dashboard');
       }
     } catch (e) {
-      // Offline fallback for seamless preview
-      const demoDoctor = {
-        id: 'doc-101',
-        _id: 'doc-101',
-        firstName: 'Abebe',
-        lastName: 'Bekele',
-        fullName: 'Dr. Abebe Bekele',
-        email: 'doctor.abebe@clinic.et',
-        phone: '+251 91 123 4567',
-        role: 'doctor',
-        specialization: 'Internal Medicine & General Practice',
-        licenseNumber: 'ETH-MOH-DOC-8921'
-      };
-      localStorage.setItem('user', JSON.stringify(demoDoctor));
-      localStorage.setItem('accessToken', 'mock-doctor-token');
-      if (updateUserState) updateUserState(demoDoctor);
-      router.push('/doctor/dashboard');
+      // No offline fallback: never fake a session with a mock token.
+      setError(e.response?.data?.message || 'Demo login failed. Make sure the backend is running and the demo accounts are seeded.');
     } finally {
       setSubmitting(false);
     }
@@ -119,20 +92,8 @@ function LoginForm() {
       const res = await login('reception@clinic.et', 'Reception@123');
       router.push('/reception/dashboard');
     } catch (e) {
-      const demoReceptionist = {
-        id: '6ad3619dbae61b560e7308d6',
-        _id: '6ad3619dbae61b560e7308d6',
-        name: 'Selamawit Tadesse',
-        email: 'reception@clinic.et',
-        phoneNumber: '+251911223344',
-        role: 'receptionist',
-        gender: 'female',
-        address: 'Addis Ababa, Bole'
-      };
-      localStorage.setItem('user', JSON.stringify(demoReceptionist));
-      localStorage.setItem('accessToken', 'mock-receptionist-token');
-      if (updateUserState) updateUserState(demoReceptionist);
-      router.push('/reception/dashboard');
+      // No offline fallback: never fake a session with a mock token.
+      setError(e.response?.data?.message || 'Demo login failed. Make sure the backend is running and the demo accounts are seeded.');
     } finally {
       setSubmitting(false);
     }

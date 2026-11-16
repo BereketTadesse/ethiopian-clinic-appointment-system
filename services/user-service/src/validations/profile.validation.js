@@ -81,10 +81,7 @@ export const adminUpdateStatusSchema = z.object({
     id: objectIdSchema,
   }),
   body: z.object({
-    status: z.enum(['active', 'suspended', 'banned']), 
-    // Assuming you update a status field, though your model has isActive: Boolean. 
-    // If it's boolean, you can change this to z.boolean()
-    isActive: z.boolean().optional(),
+    isActive: z.boolean({ error: 'isActive (true or false) is required' }),
   }),
 });
 

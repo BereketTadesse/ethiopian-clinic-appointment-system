@@ -12,13 +12,18 @@ const patientCardSchema = new mongoose.Schema(
       index: true
     },
 
-    // Links to the _id from User Service (the account holder or family member)
+    // The booking ACCOUNT (User _id in user-service). Shared by everyone in the family.
     patientId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: [true, 'Patient ID is required'],
-      unique: true,
-      index: true
-      // References the User or FamilyMember _id from the User Service
+      required: [true, 'Patient ID is required']
+    },
+
+    // The PERSON this card belongs to: null = the account holder, otherwise the
+    // FamilyMember _id from user-service. Every person gets their own card, so a
+    // child's history, blood type and allergies are never mixed with the parent's.
+    familyMemberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null
     },
 
     // ── Basic Medical Background ───────────────────────────────
@@ -74,7 +79,9 @@ const patientCardSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for patientId and cardNumber are defined inline in the schema above.
+// One card per PERSON: (account, family member). familyMemberId null = account holder.
+// Replaces the old unique index on patientId alone (see config/migrations.js).
+patientCardSchema.index({ patientId: 1, familyMemberId: 1 }, { unique: true, name: 'patient_person_unique' });
 
 const PatientCard = mongoose.model('PatientCard', patientCardSchema);
 export default PatientCard;

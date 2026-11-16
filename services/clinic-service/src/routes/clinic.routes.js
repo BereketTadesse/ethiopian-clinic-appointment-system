@@ -14,7 +14,8 @@ import {
   terminateDoctorLeave,
   addDoctorLeave,
   getDoctorLeaves,
-  deleteDoctorLeave
+  deleteDoctorLeave,
+  deactivateDoctorInternal
 } from '../controllers/doctor.controller.js';
 import { 
   getAllHolidays, 
@@ -22,7 +23,7 @@ import {
   deleteHoliday, 
   seedEthiopianHolidays 
 } from '../controllers/holiday.controller.js';
-import { protect, authorizeAdmin, authorizeDoctor, authorizeDoctorOrAdmin, protectInternalOrStaff } from '../middleware/auth.js';
+import { protect, authorizeAdmin, authorizeDoctor, authorizeDoctorOrAdmin, protectInternalOrStaff, requireInternalService } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 import { 
   getDoctorAvailableSlots, 
@@ -116,6 +117,9 @@ router.post('/doctors/:id/leaves', protect, authorizeDoctorOrAdmin, addDoctorLea
 router.get('/doctors/:id/leaves', protect, authorizeDoctorOrAdmin, getDoctorLeaves);
 router.delete('/doctors/:id/leaves/:leaveId', protect, authorizeDoctorOrAdmin, deleteDoctorLeave);
 router.patch('/doctors/:id/leaves/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
+
+// Internal (service-to-service only): user-service calls this when a doctor deletes their account
+router.patch('/internal/doctors/:id/deactivate', requireInternalService, deactivateDoctorInternal);
 
 // ============================================================
 // ⏰ SLOTS & INVENTORY MANAGEMENT

@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import redisClient from '../config/redis.js';
 
 /**
@@ -24,16 +25,6 @@ export const protect = async (req, res, next) => {
     });
   }
 
-  // Development & Demo mode token fallback (ensures offline preview / demo accounts work)
-  if (process.env.NODE_ENV !== 'production' && (token === 'mock-doctor-token' || token === 'mock-admin-token')) {
-    req.user = {
-      id: token === 'mock-doctor-token' ? '6abd0a4b4ad8c9e8e1741980' : '6abd0a4b4ad8c9e8e174197f',
-      role: token === 'mock-doctor-token' ? 'doctor' : 'admin',
-      name: token === 'mock-doctor-token' ? 'Dr. Abebe Bekele' : 'System Administrator'
-    };
-    return next();
-  }
-
   try {
     // 3. Cryptographically decode and verify using unified JWT access secret
     const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
@@ -43,7 +34,8 @@ export const protect = async (req, res, next) => {
     const decoded = jwt.verify(token, accessSecret);
 
     // 4. THE REDIS BLACKLIST BARRIER: Check if this specific token session was destroyed on logout
-    if (decoded.jti && redisClient) {
+    // (isReady guard: if Redis is configured but down, don't turn every request into a 401)
+    if (decoded.jti && redisClient?.isReady) {
       const isBlacklisted = await redisClient.get(`blacklist:${decoded.jti}`);
       
       if (isBlacklisted) {
@@ -62,9 +54,18 @@ export const protect = async (req, res, next) => {
     };
 
     if (!req.user.role) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication failed: Identity token is missing authorization privileges.' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication failed: Identity token is missing authorization privileges.'
+      });
+    }
+
+    // 5b. Deactivated accounts: user-service sets this flag in the shared Redis when an admin
+    // deactivates a user, so their still-unexpired token is rejected here immediately.
+    if (redisClient?.isReady && await redisClient.get(`user:disabled:${req.user.id}`)) {
+      return res.status(403).json({
+        success: false,
+        message: 'This account has been deactivated. Please contact the clinic administrator.'
       });
     }
 
@@ -144,11 +145,8 @@ export const authorizeDoctorOrAdmin = (req, res, next) => {
  * Allows calls with a valid INTERNAL_SERVICE_SECRET header OR an authenticated staff token.
  */
 export const protectInternalOrStaff = async (req, res, next) => {
-  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
-  const providedSecret = req.headers['x-internal-service-secret'];
-
   // 1. Authorized via internal service-to-service secret
-  if (internalSecret && providedSecret === internalSecret) {
+  if (hasValidInternalSecret(req)) {
     return next();
   }
 
@@ -176,3 +174,26 @@ export const protectInternalOrStaff = async (req, res, next) => {
 };
 
 
+
+/**
+ * Constant-time check of the x-internal-service-secret header against INTERNAL_SERVICE_SECRET.
+ */
+export const hasValidInternalSecret = (req) => {
+  const expected = process.env.INTERNAL_SERVICE_SECRET;
+  const provided = req.headers['x-internal-service-secret'];
+  if (!expected || typeof provided !== 'string') return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+/**
+ * Service-to-service only routes (no user tokens accepted).
+ */
+export const requireInternalService = (req, res, next) => {
+  if (hasValidInternalSecret(req)) return next();
+  return res.status(403).json({
+    success: false,
+    message: 'Access Denied: This endpoint is restricted to internal services.'
+  });
+};

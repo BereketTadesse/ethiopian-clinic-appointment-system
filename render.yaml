@@ -37,3 +37,11 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      # Must be the SAME value on user-, clinic- and appointment-service
+      - key: INTERNAL_SERVICE_SECRET
+        sync: false
+      - key: CLINIC_SERVICE_URL
+        sync: false
+      # Public URL of this service, used in email verification links
+      - key: USER_SERVICE_PUBLIC_URL
+        sync: false

@@ -512,15 +512,19 @@ export default function DashboardPage() {
           return;
         }
 
-        let generatedId = Date.now();
+        // The person must be saved as a real family member first, so they get their own card.
+        let generatedId;
         try {
           const createRes = await API.post('/users/createFamilyMember', newPerson);
-          if (createRes.data?.member?._id) {
-            generatedId = createRes.data.member._id;
-          }
+          generatedId = createRes.data?.member?._id;
           await fetchFamilyMembers();
         } catch (err) {
-          console.log('API save notice:', err.message);
+          setBookingError(err.response?.data?.message || 'Could not save this person as a family member. Please check the details and try again.');
+          return;
+        }
+        if (!generatedId) {
+          setBookingError('Could not save this person as a family member. Please try again.');
+          return;
         }
 
         const cardNum = makeCardNumber(generatedId);
@@ -584,15 +588,20 @@ export default function DashboardPage() {
       // selectedSlot can be an object from availableSlots with _id, or fallback string/id
       const slotId = typeof selectedSlot === 'object' ? (selectedSlot._id || selectedSlot.id) : selectedSlot;
       const targetDate = selectedDateObj?.iso || new Date().toISOString().split('T')[0];
-      const targetPatientId = activePatient?.memberId === 'self' || !activePatient?.memberId
-        ? (user?._id || user?.id)
-        : activePatient.memberId;
+      // Booking for a registered family member: send their real id so the backend gives them
+      // their own patient card and history. (Only real 24-char ids; never the account holder.)
+      const memberId = activePatient?.memberId;
+      const accountId = user?._id || user?.id;
+      const familyMemberId = memberId && memberId !== 'self' && memberId !== accountId && /^[a-f0-9]{24}$/i.test(String(memberId))
+        ? memberId
+        : undefined;
 
       const bookingPayload = {
         doctorId,
         slotId,
         date: targetDate,
-        patientId: targetPatientId,
+        patientId: accountId,
+        familyMemberId,
         patientName: activePatient?.patientName || user?.name || 'Account Holder',
         forPerson: activePatient?.forPerson || 'Self (Primary Account Holder)',
         reasonForVisit: reasonForVisit.trim() || 'General Clinical Consultation'

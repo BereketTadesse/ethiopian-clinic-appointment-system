@@ -14,6 +14,26 @@ const USER_SERVICE_SYNC_ATTEMPTS = Math.max(
 );
 const USER_SERVICE_RETRY_BASE_DELAY_MS = Number(process.env.USER_SERVICE_RETRY_BASE_DELAY_MS) || 250;
 
+const APPOINTMENT_SERVICE_URL = (process.env.APPOINTMENT_SERVICE_URL || 'http://localhost:3003').replace(/\/+$/, '');
+
+/**
+ * Ask appointment-service to cancel every upcoming scheduled appointment of a doctor
+ * who is being deactivated, so patients are not left with bookings nobody will honour.
+ * Authenticated with the internal service secret. Throws if it fails.
+ * @returns number of appointments cancelled
+ */
+const cancelUpcomingAppointments = async (doctorId) => {
+  const response = await axios.patch(
+    `${APPOINTMENT_SERVICE_URL}/api/appointments/internal/doctors/${doctorId}/cancel-upcoming`,
+    { reason: 'The doctor is no longer available. Please book with another doctor.' },
+    {
+      headers: { 'x-internal-service-secret': process.env.INTERNAL_SERVICE_SECRET || '' },
+      timeout: USER_SERVICE_TIMEOUT_MS
+    }
+  );
+  return response.data?.cancelledCount ?? 0;
+};
+
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const isRetryableUserServiceError = (error) => {
@@ -393,6 +413,27 @@ const toggleDoctorStatus = async (req, res) => {
       }
     }
 
+    // Deactivating: cancel the doctor's upcoming appointments. If that fails, undo the
+    // user-service change and abort, so nothing is left half-deactivated.
+    let cancelledAppointments = 0;
+    if (isActive === false) {
+      try {
+        cancelledAppointments = await cancelUpcomingAppointments(id);
+      } catch (appointmentError) {
+        console.error(`Appointment cancellation failed for doctor ${id}: ${appointmentError.message}`);
+        try {
+          await syncDoctorUserStatus({ doctorId: id, isActive: true, token: incomingToken });
+        } catch (revertError) {
+          console.error(`⚠️ Could not revert user-service status for doctor ${id}: ${revertError.message}`);
+        }
+        return res.status(502).json({
+          success: false,
+          message: 'Could not cancel the doctor\'s upcoming appointments, so the doctor was NOT deactivated. Please try again.',
+          error: appointmentError.response?.data?.message || appointmentError.message
+        });
+      }
+    }
+
     // Apply the local change only after the linked user account has synchronized.
     if (clinicStatusChanged) {
       doctor.isActive = isActive;
@@ -406,8 +447,9 @@ const toggleDoctorStatus = async (req, res) => {
       : 'synchronized';
     return res.status(200).json({
       success: true,
-      message: `Doctor profile ${action} successfully. User account status also updated in User Service.`,
-      data: { doctorId: id, isActive, clinicStatusChanged }
+      message: `Doctor profile ${action} successfully. User account status also updated in User Service.` +
+        (isActive === false ? ` ${cancelledAppointments} upcoming appointment(s) cancelled.` : ''),
+      data: { doctorId: id, isActive, clinicStatusChanged, cancelledAppointments }
     });
   } catch (error) {
     return res.status(500).json({
@@ -915,6 +957,44 @@ const deleteDoctorLeave = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Internal: deactivate a doctor's clinic profile (e.g. when their user account is deleted).
+ *          Cancels open slots via the Doctor post-save hook. Does NOT call back to user-service.
+ * @route   PATCH /api/clinics/internal/doctors/:id/deactivate
+ * @access  Internal services only (x-internal-service-secret)
+ */
+const deactivateDoctorInternal = async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.params.id);
+    if (!doctor) {
+      // Nothing to deactivate (e.g. user had no clinic profile) — treat as success for idempotency.
+      return res.status(200).json({ success: true, message: 'No doctor profile found; nothing to deactivate.' });
+    }
+    let cancelledAppointments;
+    try {
+      cancelledAppointments = await cancelUpcomingAppointments(req.params.id);
+    } catch (appointmentError) {
+      console.error(`Appointment cancellation failed for doctor ${req.params.id}: ${appointmentError.message}`);
+      return res.status(502).json({
+        success: false,
+        message: 'Could not cancel the doctor\'s upcoming appointments; doctor was not deactivated.'
+      });
+    }
+    if (doctor.isActive !== false) {
+      doctor.isActive = false;
+      doctor.isAcceptingPatients = false;
+      await doctor.save();
+    }
+    return res.status(200).json({
+      success: true,
+      message: `Doctor profile deactivated, open slots cancelled, ${cancelledAppointments} upcoming appointment(s) cancelled.`,
+      cancelledAppointments
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to deactivate doctor profile.', error: error.message });
+  }
+};
+
 export { 
   getAllDoctors, 
   createDoctorProfile, 
@@ -929,5 +1009,6 @@ export {
   terminateDoctorLeave,
   addDoctorLeave,
   getDoctorLeaves,
-  deleteDoctorLeave
+  deleteDoctorLeave,
+  deactivateDoctorInternal
 };

@@ -202,50 +202,6 @@ export const swaggerDocument = {
         }
       }
     },
-    '/api/users/test-tokens': {
-      get: {
-        tags: ['Authentication & Account'],
-        summary: 'Test and decode JWT tokens (Dev Mode)',
-        security: [{ BearerAuth: [] }],
-        description: 'Decodes the Access Token from the Bearer header and the Refresh Token from the HTTP-only cookie to inspect their payloads.',
-        responses: {
-          200: { description: 'Successfully decoded tokens' }
-        }
-      }
-    },
-    '/api/users/check-refresh-token': {
-      post: {
-        tags: ['Authentication & Account'],
-        summary: 'Check the revocation status of a Refresh Token',
-        description: 'Validates if the refresh token has expired, been blacklisted in Redis, or removed from MongoDB. Can accept token via cookies or JSON body.',
-        requestBody: {
-          required: false,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  refreshToken: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIs...' }
-                }
-              }
-            }
-          }
-        },
-        responses: {
-          200: { description: 'Returns the status (active or revoked) and a reason.' },
-          400: { description: 'No refresh token provided' }
-        }
-      },
-      get: {
-        tags: ['Authentication & Account'],
-        summary: 'Check the revocation status of a Refresh Token (via cookies)',
-        description: 'Validates if the refresh token has expired, been blacklisted in Redis, or removed from MongoDB using cookies.',
-        responses: {
-          200: { description: 'Returns the status (active or revoked) and a reason.' },
-          400: { description: 'No refresh token provided' }
-        }
-      }
-    },
     '/api/users/verify/{token}': {
       get: {
         tags: ['Authentication & Account'],

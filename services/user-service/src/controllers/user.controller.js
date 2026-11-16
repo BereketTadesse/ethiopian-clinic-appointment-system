@@ -9,6 +9,7 @@ const CLINIC_SERVICE_URL = process.env.CLINIC_SERVICE_URL || 'http://localhost:3
 import sendVerificationEmail from '../utils/send-email.js';
 import { getCookieOptions } from '../utils/cookieConfig.js';
 import redisClient from '../config/redis.js';
+import { applyUserActiveState } from '../utils/accountStatus.js';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
@@ -66,7 +67,10 @@ const createUser = async (req, res) => {
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
-    const verificationUrl = `http://localhost:3001/api/users/verify/${verificationToken}`;
+    // Public base URL of this service (e.g. https://clinic-user-service.onrender.com).
+    // Falls back to the host the request arrived on ('trust proxy' makes req.protocol correct behind Render).
+    const publicApiBase = (process.env.USER_SERVICE_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const verificationUrl = `${publicApiBase}/api/users/verify/${verificationToken}`;
 
     // 2. Build the HTML template string right here inside your controller!
     const subject = "CareSync Ethiopia - Verify & Activate Your Account";
@@ -235,6 +239,10 @@ const loginUser = async (req, res) => {
       return res.status(403).json({ message: 'Please verify your email before logging in' });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'This account has been deactivated. Please contact the clinic administrator.' });
+    }
+
     const tokenJti = crypto.randomUUID();
 
     // Generate Access Token (short-lived)
@@ -353,6 +361,9 @@ const refreshAccessToken = async (req, res) => {
     const user = await User.findById(decoded.userId);
     if (!user || user.refreshToken !== refreshToken) {
       return res.status(403).json({ message: 'Invalid refresh token' });
+    }
+    if (user.isActive === false) {
+      return res.status(403).json({ message: 'This account has been deactivated.' });
     }
 
     const tokenJti = crypto.randomUUID();
@@ -787,6 +798,18 @@ const getProfileById = async (req, res) => {
   try {
     const targetUserId = req.params.id;
 
+    // 🔒 Access control: a user may read their own profile; clinical staff may read any
+    // (doctors need patient history, admin/reception manage records). Everyone else is denied.
+    const requesterId = String(req.user._id || req.user.id);
+    const isSelf = requesterId === String(targetUserId);
+    const isClinicalStaff = ['admin', 'receptionist', 'doctor'].includes(req.user.role);
+    if (!isSelf && !isClinicalStaff) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: you can only view your own profile.'
+      });
+    }
+
     // 1. Find the core user row first to find out what their role is
     // 🔒 select('-password') guarantees the hashed password never leaks into the network response
     const coreUser = await User.findById(targetUserId).select('-password');
@@ -1066,21 +1089,22 @@ const deleteMe = async (req, res) => {
       await PatientProfile.findOneAndDelete({ user: userId });
     }
     else if (userRole === 'doctor') {
-      // Forge a short-lived admin token to authorize the cross-service call
-      const internalAdminToken = jwt.sign(
-        { id: userId, role: 'admin' },
-        process.env.JWT_SECRET,
-        { expiresIn: '1m' }
-      );
-
+      // Deactivate the clinic profile first (cancels open slots). Authenticated with the
+      // internal service secret — never by forging an admin token.
       try {
-        await axios.delete(
-          `${CLINIC_SERVICE_URL}/api/clinics/admin/disableDoctorProfile/${userId}`,
-          { headers: { Authorization: `Bearer ${internalAdminToken}` } }
+        await axios.patch(
+          `${CLINIC_SERVICE_URL}/api/clinics/internal/doctors/${userId}/deactivate`,
+          {},
+          { headers: { 'x-internal-service-secret': process.env.INTERNAL_SERVICE_SECRET || '' }, timeout: 5000 }
         );
         console.log(`✅ Doctor clinical profile deactivated in clinic-service for user ${userId}`);
       } catch (err) {
+        // Abort: deleting the login while the doctor stays bookable would orphan patient bookings.
         console.error(`⚠️ Failed to deactivate doctor profile in clinic-service: ${err.message}`);
+        return res.status(502).json({
+          success: false,
+          message: 'Could not deactivate your clinic schedule. Your account was not deleted; please try again or contact the clinic admin.'
+        });
       }
     }
     await User.findByIdAndDelete(userId);
@@ -1161,35 +1185,25 @@ const getUsers = async (req, res) => {
 const adminUpdateUserStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { role, isActive } = req.body;
+    const { isActive } = req.body;
 
-    const updateFields = {};
-
-    if (role !== undefined) updateFields.role = role;
-    if (isActive !== undefined) updateFields.isActive = isActive;
-
-    // 2. If the admin sent an empty request body, reject early
-    if (Object.keys(updateFields).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide at least one field to update (role, isActive, or isVerified).'
-      });
+    // Role changes are intentionally NOT supported here: there is a single admin, doctors are
+    // created via POST /admin/doctor and receptionists via POST /admin/receptionist.
+    if (String(req.user._id) === String(id) && isActive === false) {
+      return res.status(400).json({ success: false, message: 'You cannot deactivate your own admin account.' });
     }
-    // 3. Update the user record directly in MongoDB Atlas
-    // { new: true, runValidators: true } ensures we get the updated document back and validate fields like role enums
-    const updatedUser = await User.findByIdAndUpdate(
-      id,
-      { $set: updateFields },
-      { new: true, runValidators: true }
-    ).select('-password');
 
-    if (!updatedUser) {
+    const user = await User.findById(id);
+    if (!user) {
       return res.status(404).json({ success: false, message: 'Target user record not found.' });
     }
 
+    await applyUserActiveState(user, isActive);
+
+    const updatedUser = await User.findById(id).select('-password -refreshToken');
     return res.status(200).json({
       success: true,
-      message: `User security settings updated successfully.`,
+      message: `User account ${isActive ? 'activated' : 'deactivated'} successfully.`,
       data: updatedUser
     });
   }
@@ -1298,60 +1312,7 @@ const deleteFamilyMember = async (req, res) => {
   }
 };
 
-const testTokens = (req, res) => {
-  try {
-    let accessToken = null;
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-      accessToken = authHeader.split(' ')[1];
-    }
-    const refreshToken = req.cookies.refreshToken;
 
-    const decodedAccess = accessToken ? jwt.decode(accessToken) : null;
-    const decodedRefresh = refreshToken ? jwt.decode(refreshToken) : null;
-
-    res.status(200).json({
-      accessTokenPayload: decodedAccess,
-      refreshTokenPayload: decodedRefresh
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-const checkRefreshTokenStatus = async (req, res) => {
-  try {
-    const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
-    if (!refreshToken) {
-      return res.status(400).json({ message: 'No refresh token provided. Make sure to log in or pass it in the body.' });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(refreshToken, getJwtRefreshSecret());
-    } catch (err) {
-      return res.status(200).json({ status: 'revoked', reason: 'Token is invalid or structurally expired' });
-    }
-
-    // 1. Check Redis Blacklist
-    if (decoded.jti && redisClient) {
-      const isBlacklisted = await redisClient.get(`blacklist:${decoded.jti}`);
-      if (isBlacklisted) {
-        return res.status(200).json({ status: 'revoked', reason: 'Token JTI was actively blacklisted in Redis' });
-      }
-    }
-
-    // 2. Check Database
-    const user = await User.findById(decoded.userId);
-    if (!user || user.refreshToken !== refreshToken) {
-      return res.status(200).json({ status: 'revoked', reason: 'Token has been removed from the database (or user was deleted)' });
-    }
-
-    return res.status(200).json({ status: 'active', message: 'The refresh token is fully valid and active!' });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
 
 // ==========================================
 // FAMILY MEMBER PROFILE (MEDICAL INFO)
@@ -1611,8 +1572,7 @@ const toggleReceptionistStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Receptionist account not found.' });
     }
 
-    receptionist.isActive = !receptionist.isActive;
-    await receptionist.save();
+    await applyUserActiveState(receptionist, !receptionist.isActive);
 
     return res.status(200).json({
       success: true,
@@ -1630,11 +1590,59 @@ const toggleReceptionistStatus = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Internal: one family member with its medical profile. Used by appointment-service
+ *          to verify that a booking's family member belongs to the booking account, and to
+ *          show that person's own blood type / allergies on their patient card.
+ * @route   GET /api/users/internal/family-members/:id
+ * @access  Internal services only (x-internal-service-secret)
+ */
+const getFamilyMemberInternal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ success: false, message: 'Family member not found.' });
+    }
+    const member = await FamilyMember.findById(id).lean();
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Family member not found.' });
+    }
+    const profile = await FamilyMemberProfile.findOne({ familyMemberId: id }).lean();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        _id: member._id,
+        accountId: member.accountId,
+        isSelf: member.isSelf,
+        fullName: member.fullName,
+        relationship: member.relationship,
+        gender: member.gender,
+        dateOfBirth: member.dateOfBirth,
+        phoneNumber: member.phoneNumber,
+        isActive: member.isActive !== false,
+        profile: profile
+          ? {
+              bloodType: profile.bloodType || null,
+              allergies: profile.allergies || [],
+              chronicConditions: profile.chronicConditions || [],
+              medications: profile.medications || [],
+              emergencyContact: profile.emergencyContact || {}
+            }
+          : null
+      }
+    });
+  } catch (error) {
+    console.error(`❌ Internal family member lookup error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
 export {
-  createUser, verifyEmail, loginUser, logoutUser, refreshAccessToken, testTokens, checkRefreshTokenStatus, forgotPassword, resetPassword, changePassword, uploadProfile, updateProfile, createPatientProfile, getProfileById,
+  createUser, verifyEmail, loginUser, logoutUser, refreshAccessToken, forgotPassword, resetPassword, changePassword, uploadProfile, updateProfile, createPatientProfile, getProfileById,
   getPublicDoctorAccountById, requestEmailUpdate, confirmEmailUpdate, deleteMe, getUsers, adminUpdateUserStatus,
   createFamilyMember, updateFamilyMember, deleteFamilyMember, getAllFamilyMembers, getOneFamilyMember,
   createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-  createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor
+  createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal
 };
 

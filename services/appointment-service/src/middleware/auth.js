@@ -1,4 +1,6 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import redisClient from '../config/redis.js';
 
 export const protect = async (req, res, next) => {
   try {
@@ -13,7 +15,22 @@ export const protect = async (req, res, next) => {
       return res.status(500).json({ message: 'Server authentication configuration error.' });
     }
     const decoded = jwt.verify(token, accessSecret);
-    req.user = decoded;
+    // user-service signs tokens with `userId`; normalise to `req.user.id` used throughout this service.
+    req.user = { ...decoded, id: String(decoded.userId || decoded.id || '') };
+    if (!req.user.id || !req.user.role) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    if (redisClient?.isReady) {
+      // Logged-out session (user-service blacklists the token's jti on logout)
+      if (decoded.jti && await redisClient.get(`blacklist:${decoded.jti}`)) {
+        return res.status(401).json({ message: 'This session has been terminated. Please log in again.' });
+      }
+      // Account deactivated by the admin (flag set by user-service)
+      if (await redisClient.get(`user:disabled:${req.user.id}`)) {
+        return res.status(403).json({ message: 'This account has been deactivated. Please contact the clinic administrator.' });
+      }
+    }
     next();
   } catch (error) {
     res.status(401).json({ message: 'Invalid token' });
@@ -63,3 +80,18 @@ export const authorizeStaffOrDoctor = (req, res, next) => {
 };
 
 
+
+/**
+ * Service-to-service only routes: requires the shared INTERNAL_SERVICE_SECRET
+ * in the x-internal-service-secret header (constant-time comparison). User tokens are not accepted.
+ */
+export const requireInternalService = (req, res, next) => {
+  const expected = process.env.INTERNAL_SERVICE_SECRET;
+  const provided = req.headers['x-internal-service-secret'];
+  if (expected && typeof provided === 'string') {
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+  }
+  return res.status(403).json({ success: false, message: 'Access denied: internal services only.' });
+};

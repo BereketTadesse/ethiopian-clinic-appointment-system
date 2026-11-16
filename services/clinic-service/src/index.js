@@ -3,36 +3,27 @@ import path from 'path';
 import express from 'express';
 import connectDB from './config/db.js';
 import cors from 'cors';
+import helmet from 'helmet';
+import { corsOptions } from './config/cors.js';
 import cookieParser from 'cookie-parser';
 import redisClient from './config/redis.js';
 import clinicRoutes from './routes/clinic.routes.js';
+import { createGeneralRateLimiter } from './middleware/rateLimiter.js';
 import { initSlotCronScheduler, runDailySlotAllocation } from './cron/slotCron.js';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerDocument } from './config/swagger.js';
 
 const app = express();
 
-app.use(express.json());         // ✅ Parse JSON bodies on ALL routes
-app.use(express.urlencoded({ extended: true })); // ✅ Also parse form data
+app.set('trust proxy', 1); // Render / Docker sit behind one proxy hop (needed for correct client IPs in rate limiting)
+
+// Security headers. CSP is disabled because this is a JSON API (and Swagger UI needs inline assets).
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: '100kb' }));         // ✅ Parse JSON bodies on ALL routes
+app.use(express.urlencoded({ extended: true, limit: '100kb' })); // ✅ Also parse form data
 
 const PORT = process.env.PORT || process.env.CLINIC_PORT || 3002;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://your-clinic-frontend.vercel.app';
-
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  FRONTEND_URL
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
-}));
+app.use(cors(corsOptions));
 
 app.use(cookieParser());
 
@@ -60,7 +51,8 @@ async function start() {
   }
 
   // Import routes after Redis connect attempt
-  app.use('/api/clinics', clinicRoutes);
+  // Rate limit is built after the Redis connect attempt so it can use the shared Redis store
+  app.use('/api/clinics', createGeneralRateLimiter(), clinicRoutes);
 
   app.get('/health', (req, res) => {
     res.status(200).json({

@@ -1,11 +1,12 @@
 import express from 'express';
-import { createUser , verifyEmail,loginUser ,logoutUser, refreshAccessToken, testTokens, checkRefreshTokenStatus, forgotPassword ,resetPassword
+import { createUser , verifyEmail,loginUser ,logoutUser, refreshAccessToken, forgotPassword ,resetPassword
     ,changePassword,uploadProfile,updateProfile,createPatientProfile,getProfileById,requestEmailUpdate,
     confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById,createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember,
     createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-    createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor
+    createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal
 } from '../controllers/user.controller.js';
 import { protect , authorizeAdmin } from '../middleware/auth.js';
+import { requireInternalService } from '../middleware/internal.js';
 import upload from '../middleware/upload.js';
 import {authRateLimiter, generalRateLimiter} from '../middleware/rateLimiter.js';
 import { validate } from '../middleware/validate.middleware.js';
@@ -29,9 +30,6 @@ router.get('/verify/:token', generalRateLimiter, verifyEmail);
 router.get('/public-doctor-account/:id', generalRateLimiter, getPublicDoctorAccountById);
 router.post('/logout', generalRateLimiter, logoutUser);
 router.post('/refresh-token', generalRateLimiter, refreshAccessToken);
-router.get('/test-tokens', testTokens);
-router.post('/check-refresh-token', checkRefreshTokenStatus);
-router.get('/check-refresh-token', checkRefreshTokenStatus);
 router.post('/forgot-password', authRateLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post('/reset-password/:token', generalRateLimiter, validate(resetPasswordSchema), resetPassword);
 router.post('/change-password', protect, generalRateLimiter, validate(changePasswordSchema), changePassword);
@@ -49,6 +47,9 @@ router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, validate(ge
 router.post('/admin/receptionist', protect, authorizeAdmin, generalRateLimiter, validate(createReceptionistSchema), createReceptionist);
 router.get('/admin/receptionists', protect, authorizeAdmin, generalRateLimiter, getReceptionists);
 router.patch('/admin/receptionists/:id/toggle', protect, authorizeAdmin, generalRateLimiter, toggleReceptionistStatus);
+
+// Internal (service-to-service only): appointment-service verifies family members for bookings
+router.get('/internal/family-members/:id', requireInternalService, getFamilyMemberInternal);
 
 // Admin-only doctor onboarding (doctors cannot self-register)
 router.post('/admin/doctor', protect, authorizeAdmin, generalRateLimiter, validate(createDoctorSchema), createDoctor);

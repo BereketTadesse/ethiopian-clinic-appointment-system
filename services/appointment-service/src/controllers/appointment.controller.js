@@ -73,7 +73,12 @@ export const bookAppointment = async (req, res) => {
             message: 'No patient record found matching the provided patient ID.'
           });
         }
-        console.warn(`⚠️ Warning: Could not reach User Service to verify patient (${err.message}).`);
+        // Fail closed: never create an appointment (and a permanent card) for a patient we could not verify.
+        console.error(`❌ Could not verify patient ${patientId} with User Service: ${err.message}`);
+        return res.status(503).json({
+          success: false,
+          message: 'Cannot verify the patient right now. Please try again in a moment.'
+        });
       }
     }
 
@@ -82,7 +87,7 @@ export const bookAppointment = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: '🎉 Appointment successfully booked, queue allocation confirmed.',
+      message: `🎉 Appointment booked for ${appointment.date} at ${appointment.startTime}. Your queue number is ${appointment.queueNumber}.`,
       data: appointment
     });
   } catch (error) {
@@ -165,7 +170,7 @@ export const cancelAppointment = async (req, res) => {
 // ── Doctor Endpoints ──────────────────────────────────────────
 
 /**
- * @desc    Doctor sees today's scheduled queue ordered by queueNumber
+ * @desc    Doctor sees today's remaining queue, ordered by appointment time
  * @route   GET /api/appointments/my-queue
  * @access  Private (Doctor Only)
  */
@@ -340,4 +345,19 @@ export const cancelAppointmentUnified = async (req, res) => {
       message: error.message || 'Failed to cancel appointment.'
     });
   }
+};
+
+/**
+ * @desc    Internal: cancel all upcoming appointments of a doctor being deactivated
+ * @route   PATCH /api/appointments/internal/doctors/:doctorId/cancel-upcoming
+ * @access  Internal services only (x-internal-service-secret)
+ */
+export const cancelUpcomingForDoctorInternal = async (req, res) => {
+  const { doctorId } = req.params;
+  const cancelledCount = await appointmentService.cancelUpcomingForDoctor(doctorId, req.body?.reason);
+  return res.status(200).json({
+    success: true,
+    message: `Cancelled ${cancelledCount} upcoming appointment(s) for doctor ${doctorId}.`,
+    cancelledCount
+  });
 };

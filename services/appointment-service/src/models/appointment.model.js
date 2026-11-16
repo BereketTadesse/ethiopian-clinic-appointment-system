@@ -15,6 +15,11 @@ const appointmentSchema = new mongoose.Schema(
       index: true
       // INTEGER NOT NULL / Links to User Service
     },
+    // Who the visit is for: null = the account holder, otherwise the FamilyMember _id
+    familyMemberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null
+    },
     patientName: {
       type: String,
       default: ''
@@ -33,9 +38,9 @@ const appointmentSchema = new mongoose.Schema(
     },
     slotId: {
       type: String, // Linked Clinic Service 40-minute slot ID
-      required: [true, 'Slot ID is required'],
-      unique: true // 🎯 Critical Guard: Prevents double-booking the same slot!
-      // INTEGER NOT NULL UNIQUE
+      required: [true, 'Slot ID is required']
+      // Uniqueness is enforced by the partial index below: only ACTIVE appointments hold a slot,
+      // so a cancelled appointment frees its slot for a new booking.
     },
     date: {
       type: String, // Format: 'YYYY-MM-DD'
@@ -54,11 +59,20 @@ const appointmentSchema = new mongoose.Schema(
       // TIME NOT NULL
     },
 
-    // ── Queue position for this doctor on this day ───────────────
+    // Why the patient is coming (sent at booking; was previously dropped because the field was missing)
+    reasonForVisit: {
+      type: String,
+      default: '',
+      maxlength: 1000
+    },
+
+    // ── Queue position (legacy) ──────────────────────────────────
+    // No longer written. The queue number is computed when read: the appointment's position
+    // in the doctor's day ordered by slot start time (see services/queue.service.js).
+    // Kept only so old documents stay valid.
     queueNumber: {
       type: Number,
-      required: [true, 'Daily queue number positioning is required']
-      // INTEGER NOT NULL
+      default: null
     },
 
     // ── Status of the appointment ────────────────────────────────
@@ -96,6 +110,11 @@ const appointmentSchema = new mongoose.Schema(
       type: Date,
       default: null
       // TIMESTAMP
+    },
+    cancelledBy: {
+      type: String,
+      enum: ['patient', 'staff', 'system', null],
+      default: null
     }
   },
   { 
@@ -106,6 +125,18 @@ const appointmentSchema = new mongoose.Schema(
 
 // High-speed compound lookup indexing for queue management
 appointmentSchema.index({ doctorId: 1, date: 1, status: 1 });
+
+// 🎯 Double-booking guard: at most one ACTIVE appointment per slot. Cancelled ones don't count.
+// (Replaces the old plain unique index `slotId_1`; see config/migrations.js.)
+export const ACTIVE_STATUSES = ['scheduled', 'completed'];
+appointmentSchema.index(
+  { slotId: 1 },
+  {
+    name: 'slotId_active_unique',
+    unique: true,
+    partialFilterExpression: { status: { $in: ACTIVE_STATUSES } }
+  }
+);
 
 const Appointment = mongoose.model('Appointment', appointmentSchema);
 export default Appointment;
