@@ -35,6 +35,9 @@ export const clinicClient = {
   lockSlot: async (slotId, appointmentId, incomingToken) => {
     try {
       const headers = {};
+      if (process.env.INTERNAL_SERVICE_SECRET) {
+        headers['x-internal-service-secret'] = process.env.INTERNAL_SERVICE_SECRET;
+      }
       if (incomingToken) {
         headers.Authorization = `Bearer ${incomingToken}`;
         headers.Cookie = `token=${incomingToken}`;
@@ -57,6 +60,9 @@ export const clinicClient = {
    */
   releaseSlot: async (slotId, incomingToken) => {
     const headers = {};
+    if (process.env.INTERNAL_SERVICE_SECRET) {
+      headers['x-internal-service-secret'] = process.env.INTERNAL_SERVICE_SECRET;
+    }
     if (incomingToken) {
       headers.Authorization = `Bearer ${incomingToken}`;
       headers.Cookie = `token=${incomingToken}`;

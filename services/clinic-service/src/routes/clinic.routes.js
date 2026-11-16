@@ -22,7 +22,7 @@ import {
   deleteHoliday, 
   seedEthiopianHolidays 
 } from '../controllers/holiday.controller.js';
-import { protect, authorizeAdmin, authorizeDoctor } from '../middleware/auth.js';
+import { protect, authorizeAdmin, authorizeDoctor, authorizeDoctorOrAdmin, protectInternalOrStaff } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 import { 
   getDoctorAvailableSlots, 
@@ -112,9 +112,9 @@ router.patch('/admin/doctor-leaves/:doctorId/:leaveId/terminate', protect, autho
 router.post('/admin/doctor-leaves/:doctorId/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
 
 // Doctor specific leave queries / deletions / terminations
-router.post('/doctors/:id/leaves', protect, addDoctorLeave);
-router.get('/doctors/:id/leaves', protect, getDoctorLeaves);
-router.delete('/doctors/:id/leaves/:leaveId', protect, deleteDoctorLeave);
+router.post('/doctors/:id/leaves', protect, authorizeDoctorOrAdmin, addDoctorLeave);
+router.get('/doctors/:id/leaves', protect, authorizeDoctorOrAdmin, getDoctorLeaves);
+router.delete('/doctors/:id/leaves/:leaveId', protect, authorizeDoctorOrAdmin, deleteDoctorLeave);
 router.patch('/doctors/:id/leaves/:leaveId/terminate', protect, authorizeAdmin, terminateDoctorLeave);
 
 // ============================================================
@@ -124,13 +124,13 @@ router.patch('/doctors/:id/leaves/:leaveId/terminate', protect, authorizeAdmin, 
 router.get('/slots', getDoctorAvailableSlots);
 router.get('/:id/slots', getDoctorAvailableSlots);
 
-// Slot status management (direct inter-service bridge for lock & release)
-router.patch('/slots/:id/status', protect, updateSlotStatus);
+// Slot status management (direct inter-service bridge for lock & release - requires internal secret or staff)
+router.patch('/slots/:id/status', protectInternalOrStaff, updateSlotStatus);
 
-// Booking, releasing & blocking
-router.post('/bookslots', protect, bookslots);
-router.post('/releaseSlot', protect, releaseSlot);
-router.post('/releaseSlot/:id', protect, releaseSlot);
+// Booking, releasing & blocking (inter-service or staff only)
+router.post('/bookslots', protectInternalOrStaff, bookslots);
+router.post('/releaseSlot', protectInternalOrStaff, releaseSlot);
+router.post('/releaseSlot/:id', protectInternalOrStaff, releaseSlot);
 router.post('/blockSlots', protect, authorizeAdmin, blockSlots);
 router.post('/cancelBlockedSlot', protect, authorizeAdmin, cancelBlockedSlot);
 router.post('/cancelBlockedSlot/:id', protect, authorizeAdmin, cancelBlockedSlot);

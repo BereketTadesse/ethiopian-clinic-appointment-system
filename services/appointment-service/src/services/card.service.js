@@ -23,14 +23,19 @@ const findCardByPatientId = async (patientId, incomingToken) => {
 
   // 2. Fetch the true master clinical details from User Service
   try {
+    const headers = {
+      ...(incomingToken ? {
+        Cookie: `token=${incomingToken}`,
+        Authorization: `Bearer ${incomingToken}`
+      } : {}),
+      ...(process.env.INTERNAL_SERVICE_SECRET ? {
+        'x-internal-service-secret': process.env.INTERNAL_SERVICE_SECRET
+      } : {})
+    };
+
     const userServiceResponse = await axios.get(
       `${USER_SERVICE_URL}/api/users/profile/${patientId}`,
-      {
-        headers: {
-          Cookie: `token=${incomingToken}`,
-          Authorization: `Bearer ${incomingToken}`
-        }
-      }
+      { headers }
     );
 
     const resBody = userServiceResponse.data;
@@ -58,14 +63,19 @@ const findCardByCardNumber = async (cardNumber, incomingToken) => {
   if (!localCard) return null;
 
   try {
+    const headers = {
+      ...(incomingToken ? {
+        Cookie: `token=${incomingToken}`,
+        Authorization: `Bearer ${incomingToken}`
+      } : {}),
+      ...(process.env.INTERNAL_SERVICE_SECRET ? {
+        'x-internal-service-secret': process.env.INTERNAL_SERVICE_SECRET
+      } : {})
+    };
+
     const userServiceResponse = await axios.get(
       `${USER_SERVICE_URL}/api/users/profile/${localCard.patientId}`,
-      {
-        headers: {
-          Cookie: `token=${incomingToken}`,
-          Authorization: `Bearer ${incomingToken}`
-        }
-      }
+      { headers }
     );
 
     const resBody = userServiceResponse.data;

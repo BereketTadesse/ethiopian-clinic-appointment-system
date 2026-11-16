@@ -126,3 +126,53 @@ export const authorizeStaff = (req, res, next) => {
   }
 };
 
+/**
+ * Restricts access to Doctors or Administrators (e.g. for doctor leave routes)
+ */
+export const authorizeDoctorOrAdmin = (req, res, next) => {
+  if (req.user && ['admin', 'doctor'].includes(req.user.role)) {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    message: 'Access Denied: Only doctors or administrators can access leave management.'
+  });
+};
+
+/**
+ * Inter-service or clinical staff authorization for slot lock/release endpoints.
+ * Allows calls with a valid INTERNAL_SERVICE_SECRET header OR an authenticated staff token.
+ */
+export const protectInternalOrStaff = async (req, res, next) => {
+  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+  const providedSecret = req.headers['x-internal-service-secret'];
+
+  // 1. Authorized via internal service-to-service secret
+  if (internalSecret && providedSecret === internalSecret) {
+    return next();
+  }
+
+  // 2. Otherwise verify authenticated staff role (admin, doctor, receptionist)
+  if (!req.user) {
+    return protect(req, res, () => {
+      if (req.user && ['admin', 'doctor', 'receptionist'].includes(req.user.role)) {
+        return next();
+      }
+      return res.status(403).json({
+        success: false,
+        message: 'Access Denied: Direct slot status operations are restricted to internal services and clinical staff.'
+      });
+    });
+  }
+
+  if (['admin', 'doctor', 'receptionist'].includes(req.user.role)) {
+    return next();
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: 'Access Denied: Direct slot status operations are restricted to internal services and clinical staff.'
+  });
+};
+
+

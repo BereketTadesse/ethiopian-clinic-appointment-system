@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import axios from 'axios';
 import * as appointmentService from '../services/appointment.service.js';
 
 /**
@@ -18,8 +19,63 @@ export const bookAppointment = async (req, res) => {
       });
     }
 
-    const patientId = req.body.patientId || (req.user?.role === 'patient' ? req.user.id : new mongoose.Types.ObjectId().toString());
     const incomingToken = req.headers.authorization?.split(' ')[1] || req.cookies?.token || null;
+
+    let patientId;
+    if (req.user?.role === 'patient') {
+      // 🔒 Patients are strictly locked to their own account identity
+      patientId = req.user.id;
+    } else {
+      // Clinical Staff (admin, receptionist, doctor) booking on behalf of a patient
+      patientId = req.body.patientId;
+      if (!patientId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Patient ID is strictly required when booking appointments as clinical staff.'
+        });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(patientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid Patient ID format.'
+        });
+      }
+
+      // Verify with User Service that this target patient exists
+      try {
+        const userServiceBase = (process.env.USER_SERVICE_URL || 'http://localhost:3001').replace(/\/+$/, '');
+        const profileUrl = userServiceBase.endsWith('/api/users')
+          ? `${userServiceBase}/profile/${patientId}`
+          : `${userServiceBase}/api/users/profile/${patientId}`;
+
+        const headers = {};
+        if (incomingToken) {
+          headers.Authorization = `Bearer ${incomingToken}`;
+          headers.Cookie = `token=${incomingToken}`;
+        }
+        if (process.env.INTERNAL_SERVICE_SECRET) {
+          headers['x-internal-service-secret'] = process.env.INTERNAL_SERVICE_SECRET;
+        }
+
+        const userRes = await axios.get(profileUrl, { headers, timeout: 5000 });
+        const coreUser = userRes.data?.data?.user;
+        if (!coreUser || coreUser.role !== 'patient') {
+          return res.status(404).json({
+            success: false,
+            message: 'Target user record does not exist or is not a patient account.'
+          });
+        }
+      } catch (err) {
+        if (err.response?.status === 404) {
+          return res.status(404).json({
+            success: false,
+            message: 'No patient record found matching the provided patient ID.'
+          });
+        }
+        console.warn(`⚠️ Warning: Could not reach User Service to verify patient (${err.message}).`);
+      }
+    }
 
     // Call our core business logic workflow orchestrator
     const appointment = await appointmentService.createNewAppointment(req.body, patientId, incomingToken);

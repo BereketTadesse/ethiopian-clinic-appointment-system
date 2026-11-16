@@ -801,6 +801,25 @@ const getProfileById = async (req, res) => {
     const userRole = coreUser.role;
     let combinedProfileData;
 
+    // 🔒 Authorization check: If target is a patient, only the patient themself, clinical staff, or internal service may view their medical profile
+    if (userRole === 'patient') {
+      const requesterId = req.user?._id?.toString() || req.user?.id?.toString();
+      const requesterRole = req.user?.role;
+      const isSelf = requesterId && requesterId === targetUserId.toString();
+      const isStaff = ['admin', 'doctor', 'receptionist'].includes(requesterRole);
+      const isInternal = Boolean(
+        process.env.INTERNAL_SERVICE_SECRET &&
+        req.headers['x-internal-service-secret'] === process.env.INTERNAL_SERVICE_SECRET
+      );
+
+      if (!isSelf && !isStaff && !isInternal) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access Denied: You do not have permission to view this medical profile.'
+        });
+      }
+    }
+
     // 2. Fetch specialized data from the matching collection based on their role flag
     if (userRole === 'patient') {
       combinedProfileData = await PatientProfile.findOne({ user: targetUserId })
