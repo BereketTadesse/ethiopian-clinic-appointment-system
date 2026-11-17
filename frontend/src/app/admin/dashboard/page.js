@@ -3,7 +3,8 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
+import { useRequireRole } from '@/lib/useRequireRole';
+import { clinicToday, formatClinicRange } from '@/lib/time';
 import { useClinic } from '@/context/ClinicContext';
 import {
   Users,
@@ -42,10 +43,11 @@ import {
   CheckCheck,
   Key
 } from 'lucide-react';
-import API, { clinicApi } from '@/lib/api';
+import API, { clinicApi, appointmentApi } from '@/lib/api';
 
 function AdminDashboardContent() {
-  const { user, mounted } = useAuth();
+  // Admin-only page: redirects to /login (or the user's own home) otherwise
+  const { user, mounted, allowed } = useRequireRole('admin');
   const { clinicName, clinicLogo } = useClinic();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -128,13 +130,11 @@ function AdminDashboardContent() {
   // Search & Filter State for Taken Slots
   const [searchPatient, setSearchPatient] = useState('');
   const [filterDoctor, setFilterDoctor] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'confirmed' | 'in_consultation' | 'completed' | 'cancelled'
-  const [filterDate, setFilterDate] = useState('Today, Oct 13');
+  const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'scheduled' | 'completed' | 'cancelled'
+  const [filterDate, setFilterDate] = useState(() => clinicToday()); // 'YYYY-MM-DD' (Addis Ababa)
 
   // Modal States
   const [showAddDoctorModal, setShowAddDoctorModal] = useState(false);
-  const [showReserveModal, setShowReserveModal] = useState(false);
-  const [selectedSlotToReserve, setSelectedSlotToReserve] = useState(null);
   const [showPatientDetailModal, setShowPatientDetailModal] = useState(null);
   const [notification, setNotification] = useState('');
 
@@ -171,7 +171,7 @@ function AdminDashboardContent() {
         setReceptionists(res.data.data || []);
       }
     } catch (err) {
-      console.warn('Could not fetch receptionists for admin:', err.message);
+      notify(`❌ Could not load receptionists: ${err.response?.data?.message || err.message}`);
     } finally {
       setLoadingReceptionists(false);
     }
@@ -229,7 +229,7 @@ function AdminDashboardContent() {
         setAdminLeaves(res.data.data || []);
       }
     } catch (err) {
-      console.warn('Could not fetch doctor leave requests for admin:', err.message);
+      notify(`❌ Could not load doctor leave requests: ${err.response?.data?.message || err.message}`);
     } finally {
       setLoadingAdminLeaves(false);
     }
@@ -250,53 +250,41 @@ function AdminDashboardContent() {
           const workingDaysStr = Array.isArray(doc.availableDays) && doc.availableDays.length > 0
             ? doc.availableDays.map(d => (typeof d === 'string' ? d.slice(0, 3) : d)).join(', ')
             : 'Mon, Tue, Wed, Thu, Fri';
-          const shiftStr = (doc.startTime && doc.endTime) ? `${doc.startTime} - ${doc.endTime}` : '08:30 - 17:30';
+          const shiftStr = doc.startTime ? formatClinicRange(doc.startTime, doc.endTime) : '—';
 
           return {
             id: doc._id || doc.id || doc.userId,
             _id: doc._id,
             name: formattedName,
             specialty: doc.specialization || 'General Practice',
-            licenseNumber: doc.licenseNumber || 'Verified MOH',
+            licenseNumber: doc.licenseNumber || 'Not recorded',
             email: account.email || doc.email || 'N/A',
-            phone: account.phoneNumber || doc.phone || '+251 91 000 0000',
-            room: doc.room || `Suite 20${(idx % 5) + 1}`,
+            phone: account.phoneNumber || doc.phone || 'Not provided',
+            room: doc.room || null,
             shift: shiftStr,
             workingDays: workingDaysStr,
             active: doc.isActive !== undefined ? doc.isActive : true,
             yearsOfExperience: doc.yearsOfExperience || 0,
-            bio: doc.bio || '',
-            patientsCountToday: 0,
-            totalTreated: idx === 0 ? 82 : 45
+            bio: doc.bio || ''
           };
         });
         setDoctorsList(mapped);
       }
     } catch (err) {
-      console.warn('Could not fetch doctors from API:', err.message);
+      notify(`❌ Could not load the doctor roster: ${err.response?.data?.message || err.message}`);
     } finally {
       setLoadingDoctors(false);
     }
   };
 
   useEffect(() => {
+    if (!allowed) return;
     fetchAdminLeaves();
     fetchDoctors();
     fetchReceptionists();
-  }, []);
-
-  // Auth Guard: Admin Only
-  useEffect(() => {
-    if (mounted && user) {
-      if (user.role === 'receptionist') {
-        router.push('/reception/dashboard');
-      } else if (user.role === 'doctor') {
-        router.push('/doctor/dashboard');
-      } else if (user.role !== 'admin') {
-        router.push('/dashboard');
-      }
-    }
-  }, [mounted, user, router]);
+    fetchTreated();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed]);
 
   const handleReviewLeaveSubmit = async (e) => {
     e.preventDefault();
@@ -335,529 +323,264 @@ function AdminDashboardContent() {
   // ── DOCTOR ROSTER DATA (INITIALIZED FROM API) ───────────────────
   const [doctorsList, setDoctorsList] = useState([]);
 
-  // Form State for Adding Doctor
-  const [newDoctorForm, setNewDoctorForm] = useState({
+  // ── CREATE DOCTOR (POST /users/admin/doctor: login account + clinic profile) ──
+  const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const emptyDoctorForm = {
     name: '',
-    specialty: 'Internal Medicine & General Practice',
-    licenseNumber: '',
     email: '',
-    phone: '+251',
-    room: 'Suite ',
-    shift: '08:30 AM - 04:30 PM',
-    workingDays: 'Monday - Friday'
-  });
-
-  // ── TAKEN SLOTS / BOOKED APPOINTMENTS ─────────────────────────
-  const [takenSlots, setTakenSlots] = useState([
-    {
-      id: 'apt-001',
-      slotTime: '08:45 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Bereket Tadesse',
-      gender: 'male',
-      age: 28,
-      phoneNumber: '+251 91 144 5566',
-      cardNumber: 'CLN-2026-00001',
-      nationalId: 'ET-FAYDA-94821',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      chiefComplaint: 'Persistent dry cough, mild chest tightness and evening fever for 3 days.',
-      status: 'in_consultation', // 'confirmed' | 'in_consultation' | 'completed' | 'cancelled'
-      feePaid: 500, // 100 card + 400 consultation
-      paymentMethod: 'Telebirr',
-      bookedAt: 'Today, 07:30 AM'
-    },
-    {
-      id: 'apt-002',
-      slotTime: '09:30 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Almaz Wolde (Mother)',
-      gender: 'female',
-      age: 58,
-      phoneNumber: '+251 91 199 8877',
-      cardNumber: 'CLN-2026-00042',
-      nationalId: 'ET-FAYDA-38192',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      chiefComplaint: 'Hypertension checkup and renewal of daily anti-hypertensive medication.',
-      status: 'confirmed',
-      feePaid: 500,
-      paymentMethod: 'CBE Birr',
-      bookedAt: 'Today, 08:10 AM'
-    },
-    {
-      id: 'apt-003',
-      slotTime: '09:00 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Natnael Girma',
-      gender: 'male',
-      age: 7,
-      phoneNumber: '+251 92 443 2199',
-      cardNumber: 'CLN-2026-00019',
-      nationalId: 'ET-FAYDA-11048',
-      doctorId: 'doc-103',
-      doctorName: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrics & Child Health',
-      chiefComplaint: 'High fever (38.8 °C) and mild ear pain since yesterday evening.',
-      status: 'confirmed',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      bookedAt: 'Today, 08:00 AM'
-    },
-    {
-      id: 'apt-004',
-      slotTime: '10:00 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Hiwot Tesfaye',
-      gender: 'female',
-      age: 32,
-      phoneNumber: '+251 93 112 2334',
-      cardNumber: 'CLN-2026-00078',
-      nationalId: 'ET-FAYDA-55421',
-      doctorId: 'doc-104',
-      doctorName: 'Dr. Hanna Girma',
-      specialty: 'Obstetrics & Gynecology (OB/GYN)',
-      chiefComplaint: 'Second trimester routine prenatal ultrasound & blood pressure evaluation.',
-      status: 'confirmed',
-      feePaid: 600,
-      paymentMethod: 'Chapa',
-      bookedAt: 'Today, 08:15 AM'
-    },
-    {
-      id: 'apt-005',
-      slotTime: '11:00 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Kalkidan Assefa',
-      gender: 'female',
-      age: 24,
-      phoneNumber: '+251 91 223 3445',
-      cardNumber: 'CLN-2026-00095',
-      nationalId: 'ET-FAYDA-77291',
-      doctorId: 'doc-102',
-      doctorName: 'Dr. Selamawit Bekele',
-      specialty: 'General Internal Medicine',
-      chiefComplaint: 'Acute migraine attack, light sensitivity and nausea for 2 days.',
-      status: 'confirmed',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      bookedAt: 'Today, 08:45 AM'
-    },
-    {
-      id: 'apt-006',
-      slotTime: '08:00 AM',
-      date: 'Today, Oct 13',
-      patientName: 'Mulugeta Kebede',
-      gender: 'male',
-      age: 64,
-      phoneNumber: '+251 91 334 4556',
-      cardNumber: 'CLN-2026-00012',
-      nationalId: 'ET-FAYDA-90124',
-      doctorId: 'doc-105',
-      doctorName: 'Dr. Yared Melaku',
-      specialty: 'Cardiology & Hypertension Clinic',
-      chiefComplaint: 'Routine ECG review and post-angioplasty follow up visit.',
-      status: 'completed',
-      feePaid: 700,
-      paymentMethod: 'CBE Birr',
-      bookedAt: 'Yesterday, 04:00 PM'
-    }
-  ]);
-
-  // ── OPEN / AVAILABLE SLOTS (Can be reserved by receptionist) ─
-  const [openSlots, setOpenSlots] = useState([
-    {
-      id: 'slot-open-1',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      room: 'Suite 201',
-      time: '11:00 AM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-2',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      room: 'Suite 201',
-      time: '02:00 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-3',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      room: 'Suite 201',
-      time: '03:15 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-4',
-      doctorId: 'doc-102',
-      doctorName: 'Dr. Selamawit Bekele',
-      specialty: 'General Internal Medicine',
-      room: 'Suite 204',
-      time: '01:30 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-5',
-      doctorId: 'doc-102',
-      doctorName: 'Dr. Selamawit Bekele',
-      specialty: 'General Internal Medicine',
-      room: 'Suite 204',
-      time: '02:45 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-6',
-      doctorId: 'doc-103',
-      doctorName: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrics & Child Health',
-      room: 'Suite 108',
-      time: '10:30 AM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-7',
-      doctorId: 'doc-103',
-      doctorName: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrics & Child Health',
-      room: 'Suite 108',
-      time: '01:00 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '400 ETB'
-    },
-    {
-      id: 'slot-open-8',
-      doctorId: 'doc-104',
-      doctorName: 'Dr. Hanna Girma',
-      specialty: 'Obstetrics & Gynecology (OB/GYN)',
-      room: 'Suite 212',
-      time: '02:15 PM',
-      date: 'Today, Oct 13',
-      duration: '30 mins',
-      fee: '500 ETB'
-    },
-    {
-      id: 'slot-open-9',
-      doctorId: 'doc-105',
-      doctorName: 'Dr. Yared Melaku',
-      specialty: 'Cardiology & Hypertension Clinic',
-      room: 'Suite 305',
-      time: '02:30 PM',
-      date: 'Today, Oct 13',
-      duration: '45 mins',
-      fee: '600 ETB'
-    }
-  ]);
-
-  // ── TREATED PATIENTS HISTORY ──────────────────────────────────
-  const [treatedPatients, setTreatedPatients] = useState([
-    {
-      id: 'trt-001',
-      patientName: 'Mulugeta Kebede',
-      cardNumber: 'CLN-2026-00012',
-      gender: 'male',
-      age: 64,
-      treatedDate: 'Today, Oct 13 at 08:35 AM',
-      doctorName: 'Dr. Yared Melaku',
-      specialty: 'Cardiology',
-      diagnosis: 'Ischemic Heart Disease (Post-PCI), Well-controlled Hypertensive Status',
-      rxSummary: 'Atorvastatin 40mg q.d., Amlodipine 5mg q.d., Aspirin 81mg q.d.',
-      feePaid: 700,
-      paymentMethod: 'CBE Birr',
-      followUp: 'Review in 3 Months'
-    },
-    {
-      id: 'trt-002',
-      patientName: 'Tigist Hailu',
-      cardNumber: 'CLN-2026-00055',
-      gender: 'female',
-      age: 36,
-      treatedDate: 'Yesterday, Oct 12 at 03:40 PM',
-      doctorName: 'Dr. Selamawit Bekele',
-      specialty: 'General Internal Medicine',
-      diagnosis: 'Acute Bacterial Sinusitis, Mild Iron Deficiency Anemia',
-      rxSummary: 'Amoxicillin-Clavulanate 625mg b.i.d. x 7d, Ferrous Sulfate 200mg',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      followUp: 'As needed'
-    },
-    {
-      id: 'trt-003',
-      patientName: 'Samuel Mengistu',
-      cardNumber: 'CLN-2026-00089',
-      gender: 'male',
-      age: 42,
-      treatedDate: 'Yesterday, Oct 12 at 11:20 AM',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine',
-      diagnosis: 'Type 2 Diabetes Mellitus (HbA1c 7.4%), Peripheral Neuropathy',
-      rxSummary: 'Metformin 850mg b.i.d., B-Complex Neuro vitamins',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      followUp: 'Fasting Blood Sugar check in 4 Weeks'
-    },
-    {
-      id: 'trt-004',
-      patientName: 'Bethlehem Desta',
-      cardNumber: 'CLN-2026-00031',
-      gender: 'female',
-      age: 5,
-      treatedDate: 'Oct 11, 2026 at 10:15 AM',
-      doctorName: 'Dr. Dawit Tadesse',
-      specialty: 'Pediatrics',
-      diagnosis: 'Acute Tonsillitis with Pharyngitis',
-      rxSummary: 'Azithromycin suspension 200mg/5ml x 3d, Paracetamol drops',
-      feePaid: 500,
-      paymentMethod: 'Chapa',
-      followUp: 'Complete full medication course'
-    }
-  ]);
-
-  // Reservation Form State (For Walk-in / Phone Callers)
-  const [reserveForm, setReserveForm] = useState({
-    patientName: '',
-    gender: 'male',
-    age: '',
-    phoneNumber: '+251 9',
-    cardNumber: '',
-    chiefComplaint: '',
-    paymentMethod: 'Telebirr'
-  });
-
-  const notify = (msg) => {
-    setNotification(msg);
-    setTimeout(() => setNotification(''), 4000);
+    phoneNumber: '',
+    password: '',
+    gender: 'other',
+    address: '',
+    specialization: '',
+    licenseNumber: '',
+    yearsOfExperience: '',
+    bio: '',
+    availableDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+    startTime: '08:30',
+    endTime: '17:00',
+    breakStart: '12:30',
+    breakEnd: '13:30'
   };
+  const [newDoctorForm, setNewDoctorForm] = useState(emptyDoctorForm);
+  const [submittingDoctor, setSubmittingDoctor] = useState(false);
+  const [doctorFormError, setDoctorFormError] = useState('');
+
+  const notify = (msg, ms = 4000) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(''), ms);
+  };
+
+  /** Turn a backend error response into readable text (validation errors list every problem). */
+  const apiErrorText = (err, fallback) => {
+    const data = err?.response?.data;
+    const details = Array.isArray(data?.errors) ? data.errors.map((e) => e.message).filter(Boolean) : [];
+    const unique = [...new Set([data?.message, ...details].filter(Boolean))];
+    return unique.length ? unique.join(' • ') : (err?.message || fallback);
+  };
+
+  // ── APPOINTMENTS (live from appointment-service) ──────────────
+  const [dayAppointments, setDayAppointments] = useState([]);
+  const [loadingAppointments, setLoadingAppointments] = useState(false);
+  const [appointmentsError, setAppointmentsError] = useState('');
+
+  const [treatedAppointments, setTreatedAppointments] = useState([]);
+  const [loadingTreated, setLoadingTreated] = useState(false);
+  const [treatedError, setTreatedError] = useState('');
+
+  const [openSlotsRaw, setOpenSlotsRaw] = useState([]);
+  const [loadingOpenSlots, setLoadingOpenSlots] = useState(false);
+  const [openSlotsError, setOpenSlotsError] = useState('');
+
+  const fetchDayAppointments = async (date = filterDate) => {
+    setLoadingAppointments(true);
+    setAppointmentsError('');
+    try {
+      const res = await appointmentApi.get('/appointments', { params: { date } });
+      setDayAppointments(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setDayAppointments([]);
+      setAppointmentsError(apiErrorText(err, 'Could not load appointments.'));
+    } finally {
+      setLoadingAppointments(false);
+    }
+  };
+
+  const fetchTreated = async () => {
+    setLoadingTreated(true);
+    setTreatedError('');
+    try {
+      const res = await appointmentApi.get('/appointments', { params: { status: 'completed' } });
+      setTreatedAppointments(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      setTreatedAppointments([]);
+      setTreatedError(apiErrorText(err, 'Could not load completed visits.'));
+    } finally {
+      setLoadingTreated(false);
+    }
+  };
+
+  // Free slots per active doctor for the selected date (slots are generated by the backend)
+  const fetchOpenSlots = async (date = filterDate, doctors = doctorsList) => {
+    const activeDoctors = doctors.filter((d) => d.active);
+    if (activeDoctors.length === 0) {
+      setOpenSlotsRaw([]);
+      return;
+    }
+    setLoadingOpenSlots(true);
+    setOpenSlotsError('');
+    const results = await Promise.allSettled(
+      activeDoctors.map((doc) => clinicApi.get(`/${doc.id}/slots`, { params: { date } }))
+    );
+    const slots = [];
+    let failures = 0;
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && Array.isArray(r.value.data?.data)) {
+        r.value.data.data.forEach((slot) => slots.push({ ...slot, doctorId: slot.doctorId || activeDoctors[i].id }));
+      } else {
+        failures += 1;
+      }
+    });
+    slots.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    setOpenSlotsRaw(slots);
+    if (failures > 0) {
+      setOpenSlotsError(`Could not load slots for ${failures} of ${activeDoctors.length} doctor(s).`);
+    }
+    setLoadingOpenSlots(false);
+  };
+
+  useEffect(() => {
+    if (allowed) fetchDayAppointments(filterDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed, filterDate]);
+
+  useEffect(() => {
+    if (allowed) fetchOpenSlots(filterDate, doctorsList);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed, filterDate, doctorsList]);
+
+  // Map backend records into the shape the cards below render
+  const doctorById = (id) => doctorsList.find((d) => String(d.id) === String(id));
+  const toRow = (apt) => {
+    const doc = doctorById(apt.doctorId);
+    return {
+      id: apt._id,
+      slotTime: apt.startTime ? formatClinicRange(apt.startTime, apt.endTime) : '—',
+      date: apt.date,
+      patientName: apt.patientName || 'Patient',
+      forPerson: apt.forPerson || 'Self',
+      cardNumber: apt.cardNumber || '—',
+      doctorId: apt.doctorId,
+      doctorName: doc?.name || 'Doctor',
+      specialty: doc?.specialty || '',
+      chiefComplaint: apt.reasonForVisit || 'Not provided',
+      status: apt.status,
+      queueNumber: apt.queueNumber,
+      doctorNotes: apt.doctorNotes,
+      prescription: apt.prescription,
+      followUpDate: apt.followUpDate,
+      cancelReason: apt.cancelReason
+    };
+  };
+  const takenSlots = dayAppointments.map(toRow);
+  const treatedPatients = treatedAppointments.map(toRow);
+  const openSlots = openSlotsRaw.map((slot) => {
+    const doc = doctorById(slot.doctorId);
+    return {
+      id: slot._id,
+      doctorId: slot.doctorId,
+      doctorName: doc?.name || 'Doctor',
+      specialty: doc?.specialty || '',
+      time: formatClinicRange(slot.startTime, slot.endTime),
+      date: slot.date,
+      duration: '40 mins'
+    };
+  });
 
   // Filtered Taken Slots
   const filteredTakenSlots = takenSlots.filter((slot) => {
-    const matchesDoctor = filterDoctor === 'all' || slot.doctorId === filterDoctor;
+    const q = searchPatient.trim().toLowerCase();
+    const matchesDoctor = filterDoctor === 'all' || String(slot.doctorId) === String(filterDoctor);
     const matchesStatus = filterStatus === 'all' || slot.status === filterStatus;
     const matchesSearch =
-      searchPatient.trim() === '' ||
-      slot.patientName.toLowerCase().includes(searchPatient.toLowerCase()) ||
-      slot.cardNumber.toLowerCase().includes(searchPatient.toLowerCase()) ||
-      slot.phoneNumber.includes(searchPatient);
+      q === '' ||
+      slot.patientName.toLowerCase().includes(q) ||
+      slot.cardNumber.toLowerCase().includes(q) ||
+      slot.forPerson.toLowerCase().includes(q);
     return matchesDoctor && matchesStatus && matchesSearch;
   });
 
-  // Handle Mark Arrived / Change Status
-  const handleUpdateStatus = (slotId, newStatus) => {
-    setTakenSlots(prev =>
-      prev.map(item => {
-        if (item.id === slotId) {
-          return { ...item, status: newStatus };
-        }
-        return item;
-      })
-    );
-    notify(`Status successfully updated to "${newStatus.replace('_', ' ')}"!`);
-  };
-
-  // Handle Cancel / Release Slot
-  const handleCancelSlot = (slotId) => {
-    const slot = takenSlots.find(s => s.id === slotId);
+  // Cancel an appointment (admin: reason required). The slot becomes bookable again.
+  const handleCancelSlot = async (slotId) => {
+    const slot = takenSlots.find((s) => s.id === slotId);
     if (!slot) return;
-    if (confirm(`Are you sure you want to cancel the reservation for ${slot.patientName} (${slot.slotTime})?`)) {
-      setTakenSlots(prev => prev.filter(s => s.id !== slotId));
-      // Return back to open slots
-      setOpenSlots(prev => [
-        ...prev,
-        {
-          id: `slot-open-${Date.now()}`,
-          doctorId: slot.doctorId,
-          doctorName: slot.doctorName,
-          specialty: slot.specialty,
-          room: 'Suite 201',
-          time: slot.slotTime,
-          date: slot.date,
-          duration: '30 mins',
-          fee: `${slot.feePaid - 100} ETB`
-        }
-      ]);
-      notify(`Appointment cancelled. Slot ${slot.slotTime} released back to open slots.`);
+    const reason = window.prompt(`Reason for cancelling ${slot.patientName}'s ${slot.slotTime} appointment (required):`);
+    if (reason === null) return;
+    if (!reason.trim()) {
+      notify('❌ A cancellation reason is required.');
+      return;
+    }
+    try {
+      await appointmentApi.patch(`/appointments/${slotId}/cancel`, { cancelReason: reason.trim() });
+      notify(`Appointment cancelled. Slot ${slot.slotTime} is bookable again.`);
+      fetchDayAppointments();
+      fetchOpenSlots();
+    } catch (err) {
+      notify(`❌ ${apiErrorText(err, 'Could not cancel the appointment.')}`, 7000);
     }
   };
 
-  // Handle Quick Reservation from Open Slots
-  const handleOpenReserveModal = (slot) => {
-    setSelectedSlotToReserve(slot);
-    setReserveForm({
-      patientName: '',
-      gender: 'male',
-      age: '',
-      phoneNumber: '+251 9',
-      cardNumber: `CLN-2026-000${Math.floor(10 + Math.random() * 89)}`,
-      chiefComplaint: '',
-      paymentMethod: 'Telebirr'
-    });
-    setShowReserveModal(true);
-  };
-
-  const handleConfirmReservation = (e) => {
+  // Create a doctor: login account + clinic profile in one request (rolled back by the backend on failure)
+  const handleAddDoctorSubmit = async (e) => {
     e.preventDefault();
-    if (!reserveForm.patientName || !reserveForm.phoneNumber) {
-      alert('Please provide patient name and phone number');
+    setDoctorFormError('');
+    const f = newDoctorForm;
+    if (f.availableDays.length === 0) {
+      setDoctorFormError('Select at least one working day.');
+      return;
+    }
+    if (Boolean(f.breakStart) !== Boolean(f.breakEnd)) {
+      setDoctorFormError('Provide both break start and break end, or leave both empty.');
       return;
     }
 
-    const newAppointment = {
-      id: `apt-${Date.now()}`,
-      slotTime: selectedSlotToReserve.time,
-      date: selectedSlotToReserve.date,
-      patientName: reserveForm.patientName,
-      gender: reserveForm.gender,
-      age: Number(reserveForm.age) || 30,
-      phoneNumber: reserveForm.phoneNumber,
-      cardNumber: reserveForm.cardNumber,
-      nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 89999)}`,
-      doctorId: selectedSlotToReserve.doctorId,
-      doctorName: selectedSlotToReserve.doctorName,
-      specialty: selectedSlotToReserve.specialty,
-      chiefComplaint: reserveForm.chiefComplaint || 'Consultation via Receptionist Booking',
-      status: 'confirmed',
-      feePaid: 500,
-      paymentMethod: reserveForm.paymentMethod,
-      bookedAt: 'Just Now (Reception Desk)'
+    const body = {
+      name: f.name.trim(),
+      email: f.email.trim(),
+      phoneNumber: f.phoneNumber.trim(),
+      password: f.password,
+      gender: f.gender,
+      specialization: f.specialization.trim(),
+      licenseNumber: f.licenseNumber.trim(),
+      availableDays: f.availableDays,
+      startTime: f.startTime,
+      endTime: f.endTime
     };
-
-    // Add to taken slots
-    setTakenSlots(prev => [newAppointment, ...prev]);
-    // Remove from open slots
-    setOpenSlots(prev => prev.filter(s => s.id !== selectedSlotToReserve.id));
-    setShowReserveModal(false);
-    notify(`🎉 Slot ${selectedSlotToReserve.time} reserved for ${reserveForm.patientName}!`);
-  };
-
-  // Handle Add Doctor
-  const handleAddDoctorSubmit = (e) => {
-    e.preventDefault();
-    if (!newDoctorForm.name || !newDoctorForm.licenseNumber) {
-      alert('Please fill out doctor name and MOH license number');
-      return;
+    if (f.address.trim()) body.address = f.address.trim();
+    if (f.bio.trim()) body.bio = f.bio.trim();
+    if (f.yearsOfExperience !== '') body.yearsOfExperience = Number(f.yearsOfExperience);
+    if (f.breakStart && f.breakEnd) {
+      body.breakStart = f.breakStart;
+      body.breakEnd = f.breakEnd;
     }
 
-    const docId = `doc-${Date.now()}`;
-    const newDoc = {
-      id: docId,
-      name: newDoctorForm.name.startsWith('Dr.') ? newDoctorForm.name : `Dr. ${newDoctorForm.name}`,
-      specialty: newDoctorForm.specialty,
-      licenseNumber: newDoctorForm.licenseNumber,
-      email: newDoctorForm.email || `dr.${newDoctorForm.name.toLowerCase().replace(/[^a-z]/g, '')}@clinic.et`,
-      phone: newDoctorForm.phone,
-      room: newDoctorForm.room,
-      shift: newDoctorForm.shift,
-      workingDays: newDoctorForm.workingDays,
-      active: true,
-      patientsCountToday: 0,
-      totalTreated: 0
-    };
-
-    setDoctorsList(prev => [...prev, newDoc]);
-
-    // Generate initial open slots for this new doctor
-    const generatedSlots = [
-      {
-        id: `slot-${docId}-1`,
-        doctorId: docId,
-        doctorName: newDoc.name,
-        specialty: newDoc.specialty,
-        room: newDoc.room,
-        time: '09:00 AM',
-        date: 'Today, Oct 13',
-        duration: '30 mins',
-        fee: '400 ETB'
-      },
-      {
-        id: `slot-${docId}-2`,
-        doctorId: docId,
-        doctorName: newDoc.name,
-        specialty: newDoc.specialty,
-        room: newDoc.room,
-        time: '10:30 AM',
-        date: 'Today, Oct 13',
-        duration: '30 mins',
-        fee: '400 ETB'
-      },
-      {
-        id: `slot-${docId}-3`,
-        doctorId: docId,
-        doctorName: newDoc.name,
-        specialty: newDoc.specialty,
-        room: newDoc.room,
-        time: '02:00 PM',
-        date: 'Today, Oct 13',
-        duration: '30 mins',
-        fee: '400 ETB'
-      }
-    ];
-
-    setOpenSlots(prev => [...prev, ...generatedSlots]);
-    setShowAddDoctorModal(false);
-    setNewDoctorForm({
-      name: '',
-      specialty: 'Internal Medicine & General Practice',
-      licenseNumber: '',
-      email: '',
-      phone: '+251',
-      room: 'Suite ',
-      shift: '08:30 AM - 04:30 PM',
-      workingDays: 'Monday - Friday'
-    });
-    notify(`✅ ${newDoc.name} successfully registered to clinic staff!`);
+    setSubmittingDoctor(true);
+    try {
+      await API.post('/users/admin/doctor', body);
+      setShowAddDoctorModal(false);
+      setNewDoctorForm(emptyDoctorForm);
+      notify(`✅ Dr. ${body.name} created. They can log in with ${body.email} and the password you set.`, 7000);
+      fetchDoctors();
+    } catch (err) {
+      setDoctorFormError(apiErrorText(err, 'Could not create the doctor.'));
+    } finally {
+      setSubmittingDoctor(false);
+    }
   };
 
-  // Toggle Doctor Active Status (Persisted to Database)
+  // Toggle Doctor Active Status (Persisted to Database). Deactivating also cancels the doctor's
+  // upcoming appointments; if that fails the backend rolls everything back and we show why.
   const handleToggleDoctorStatus = async (doctorId) => {
     const targetDoc = doctorsList.find(d => d.id === doctorId);
     if (!targetDoc) return;
     const nextState = !targetDoc.active;
+    if (!nextState && !confirm(`Deactivate ${targetDoc.name}? All of their upcoming appointments will be cancelled.`)) {
+      return;
+    }
 
     try {
       const res = await clinicApi.patch(`/admin/toggleDoctorStatus/${doctorId}`, {
         isActive: nextState
       });
-      if (res.data?.success) {
-        notify(`✅ ${targetDoc.name} marked as ${nextState ? 'Active' : 'On Leave / Inactive'}`);
-        fetchDoctors();
-        return;
-      }
+      notify(`✅ ${res.data?.message || `${targetDoc.name} marked as ${nextState ? 'Active' : 'Inactive'}`}`, 6000);
+      fetchDoctors();
+      fetchDayAppointments();
     } catch (err) {
-      console.warn('Backend toggle failed, applying optimistic update:', err.message);
+      notify(`❌ ${apiErrorText(err, 'Could not change the doctor status.')}`, 8000);
     }
-
-    // Local fallback update
-    setDoctorsList(prev =>
-      prev.map(d => {
-        if (d.id === doctorId) {
-          notify(`${d.name} marked as ${nextState ? 'Active' : 'On Leave / Inactive'}`);
-          return { ...d, active: nextState };
-        }
-        return d;
-      })
-    );
   };
 
-  if (!mounted) {
+  if (!allowed) {
     return (
       <div
         suppressHydrationWarning
@@ -1100,9 +823,9 @@ function AdminDashboardContent() {
               <Calendar size={24} />
             </div>
             <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Booked Slots</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Booked on {filterDate}</div>
               <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '2px' }}>
-                {takenSlots.length}
+                {takenSlots.filter(s => s.status !== 'cancelled').length}
               </div>
             </div>
           </div>
@@ -1122,7 +845,7 @@ function AdminDashboardContent() {
               <Clock size={24} />
             </div>
             <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Open Slots to Reserve</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Open Slots on {filterDate}</div>
               <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '2px' }}>
                 {openSlots.length}
               </div>
@@ -1168,7 +891,7 @@ function AdminDashboardContent() {
             <div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Treated Patients</div>
               <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '2px' }}>
-                {treatedPatients.length + takenSlots.filter(s => s.status === 'completed').length}
+                {treatedPatients.length}
               </div>
             </div>
           </div>
@@ -1264,7 +987,7 @@ function AdminDashboardContent() {
               whiteSpace: 'nowrap'
             }}
           >
-            <Clock size={18} /> Open Slots to Reserve ({openSlots.length})
+            <Clock size={18} /> Open Slots ({openSlots.length})
           </button>
 
           <button
@@ -1412,6 +1135,18 @@ function AdminDashboardContent() {
                   )}
                 </div>
 
+                {/* Date */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>Date:</span>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={filterDate}
+                    onChange={(e) => e.target.value && setFilterDate(e.target.value)}
+                    style={{ height: '42px', fontSize: '0.88rem' }}
+                  />
+                </div>
+
                 {/* Filter by Doctor */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>Doctor:</span>
@@ -1440,8 +1175,7 @@ function AdminDashboardContent() {
                     style={{ height: '42px', minWidth: '150px', fontSize: '0.88rem' }}
                   >
                     <option value="all">All Statuses</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="in_consultation">In Consultation</option>
+                    <option value="scheduled">Scheduled</option>
                     <option value="completed">Completed</option>
                     <option value="cancelled">Cancelled</option>
                   </select>
@@ -1467,7 +1201,9 @@ function AdminDashboardContent() {
             {/* Results Counter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
               <div>
-                Showing <strong>{filteredTakenSlots.length}</strong> booked slots for {filterDate}
+                {loadingAppointments
+                  ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Loader2 size={15} className="spin-icon" /> Loading appointments…</span>
+                  : <>Showing <strong>{filteredTakenSlots.length}</strong> appointments for {filterDate}</>}
               </div>
               <button
                 onClick={() => setActiveTab('open_slots')}
@@ -1477,15 +1213,24 @@ function AdminDashboardContent() {
               </button>
             </div>
 
+            {appointmentsError && (
+              <div className="glass-panel" style={{ padding: '14px 18px', marginBottom: '14px', borderLeft: '4px solid #e11d48', color: '#b91c1c', fontSize: '0.88rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                <span><AlertCircle size={16} style={{ verticalAlign: 'middle' }} /> {appointmentsError}</span>
+                <button onClick={() => fetchDayAppointments()} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>
+              </div>
+            )}
+
             {/* Slot Cards List */}
-            {filteredTakenSlots.length === 0 ? (
+            {loadingAppointments ? null : filteredTakenSlots.length === 0 ? (
               <div className="glass-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
                 <Calendar size={48} style={{ color: '#cbd5e1', margin: '0 auto 14px' }} />
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 6px' }}>
-                  No Booked Slots Found
+                  No Appointments Found
                 </h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '420px', margin: '0 auto 20px' }}>
-                  No reservations match your current filters. Adjust doctor selection or clear the search query.
+                  {takenSlots.length === 0
+                    ? `No appointments are booked for ${filterDate}.`
+                    : 'No appointments match your current filters. Adjust the doctor/status selection or clear the search.'}
                 </p>
                 <button
                   onClick={() => { setSearchPatient(''); setFilterDoctor('all'); setFilterStatus('all'); }}
@@ -1498,12 +1243,11 @@ function AdminDashboardContent() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 {filteredTakenSlots.map((slot) => {
                   const statusColors = {
-                    confirmed: { bg: '#e0e7ff', color: '#4338ca', label: 'Confirmed Booking' },
-                    in_consultation: { bg: '#fef3c7', color: '#b45309', label: 'In Consultation 🩺' },
+                    scheduled: { bg: '#e0e7ff', color: '#4338ca', label: 'Scheduled' },
                     completed: { bg: '#dcfce7', color: '#15803d', label: 'Treated & Completed ✓' },
                     cancelled: { bg: '#fee2e2', color: '#b91c1c', label: 'Cancelled' }
                   };
-                  const currentStatus = statusColors[slot.status] || statusColors.confirmed;
+                  const currentStatus = statusColors[slot.status] || statusColors.scheduled;
 
                   return (
                     <div
@@ -1511,7 +1255,7 @@ function AdminDashboardContent() {
                       className="glass-panel"
                       style={{
                         padding: '20px 24px',
-                        borderLeft: `5px solid ${slot.status === 'in_consultation' ? '#f59e0b' : slot.status === 'completed' ? '#10b981' : '#4f46e5'}`,
+                        borderLeft: `5px solid ${slot.status === 'cancelled' ? '#e11d48' : slot.status === 'completed' ? '#10b981' : '#4f46e5'}`,
                         transition: 'transform 0.15s ease'
                       }}
                     >
@@ -1553,7 +1297,8 @@ function AdminDashboardContent() {
                                 color: '#475569',
                                 fontWeight: 600
                               }}>
-                                {slot.gender === 'male' ? 'Male' : 'Female'}, Age {slot.age}
+                                {slot.forPerson === 'Self' ? 'Account holder' : slot.forPerson}
+                                {slot.queueNumber ? ` • Queue #${slot.queueNumber}` : ''}
                               </span>
                               <span style={{
                                 fontSize: '0.75rem',
@@ -1605,52 +1350,15 @@ function AdminDashboardContent() {
                             }}>
                               {currentStatus.label}
                             </span>
-                            <span style={{
-                              fontSize: '0.78rem',
-                              fontWeight: 700,
-                              color: '#15803d',
-                              background: '#dcfce7',
-                              padding: '4px 8px',
-                              borderRadius: '6px'
-                            }}>
-                              {slot.feePaid} ETB Paid ({slot.paymentMethod})
-                            </span>
                           </div>
+                          {slot.status === 'cancelled' && slot.cancelReason && (
+                            <div style={{ fontSize: '0.78rem', color: '#b91c1c', maxWidth: '260px', textAlign: 'right' }}>
+                              Reason: {slot.cancelReason}
+                            </div>
+                          )}
 
                           {/* Quick Actions */}
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
-                            {slot.status === 'confirmed' && (
-                              <button
-                                onClick={() => handleUpdateStatus(slot.id, 'in_consultation')}
-                                className="btn btn-sm"
-                                style={{
-                                  background: '#4f46e5',
-                                  color: 'white',
-                                  fontSize: '0.8rem',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px'
-                                }}
-                              >
-                                Send to Doctor Room
-                              </button>
-                            )}
-
-                            {slot.status === 'in_consultation' && (
-                              <button
-                                onClick={() => handleUpdateStatus(slot.id, 'completed')}
-                                className="btn btn-sm"
-                                style={{
-                                  background: '#10b981',
-                                  color: 'white',
-                                  fontSize: '0.8rem',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px'
-                                }}
-                              >
-                                Mark Visit Completed ✓
-                              </button>
-                            )}
-
                             <button
                               onClick={() => setShowPatientDetailModal(slot)}
                               className="btn btn-secondary btn-sm"
@@ -1672,7 +1380,7 @@ function AdminDashboardContent() {
                                   borderRadius: '8px'
                                 }}
                               >
-                                <Ban size={14} /> Release Slot
+                                <Ban size={14} /> Cancel Appointment
                               </button>
                             )}
                           </div>
@@ -1699,28 +1407,47 @@ function AdminDashboardContent() {
                     Available Consultation Slots ({openSlots.length})
                   </h2>
                   <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-                    These slots are unreserved. Click <strong>"Reserve for Patient"</strong> to register a walk-in or telephone patient.
+                    Free 40-minute slots on <strong>{filterDate}</strong>, generated automatically from each doctor&apos;s schedule.
+                    Walk-in and phone bookings are made from the <strong>Reception desk</strong>.
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={filterDate}
+                    onChange={(e) => e.target.value && setFilterDate(e.target.value)}
+                    style={{ height: '36px', fontSize: '0.85rem' }}
+                  />
                   <button
-                    onClick={() => notify('Slot schedules refreshed from central clinic sync.')}
+                    onClick={() => fetchOpenSlots()}
+                    disabled={loadingOpenSlots}
                     className="btn btn-secondary btn-sm"
                   >
-                    <RefreshCw size={14} /> Refresh
+                    <RefreshCw size={14} className={loadingOpenSlots ? 'spin-icon' : ''} /> Refresh
                   </button>
                 </div>
               </div>
             </div>
 
-            {openSlots.length === 0 ? (
+            {openSlotsError && (
+              <div className="glass-panel" style={{ padding: '14px 18px', marginBottom: '14px', borderLeft: '4px solid #e11d48', color: '#b91c1c', fontSize: '0.88rem' }}>
+                <AlertCircle size={16} style={{ verticalAlign: 'middle' }} /> {openSlotsError}
+              </div>
+            )}
+
+            {loadingOpenSlots ? (
+              <div className="glass-panel" style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <Loader2 size={20} className="spin-icon" /> Loading free slots…
+              </div>
+            ) : openSlots.length === 0 ? (
               <div className="glass-panel" style={{ padding: '60px 20px', textAlign: 'center' }}>
                 <Clock size={48} style={{ color: '#cbd5e1', margin: '0 auto 14px' }} />
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 6px' }}>
-                  All Slots are Currently Booked
+                  No Free Slots
                 </h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '420px', margin: '0 auto 20px' }}>
-                  There are no unreserved slots for today. You can add more doctors or release existing slots.
+                  There are no free slots on {filterDate}: they are all booked, the doctors are off, or it is a clinic holiday.
                 </p>
                 <button onClick={() => setShowAddDoctorModal(true)} className="btn btn-primary btn-sm">
                   <UserPlus size={15} /> Add Another Doctor
@@ -1758,15 +1485,8 @@ function AdminDashboardContent() {
                         }}>
                           {slot.time}
                         </span>
-                        <span style={{
-                          background: '#ecfdf5',
-                          color: '#047857',
-                          fontWeight: 700,
-                          fontSize: '0.85rem',
-                          padding: '4px 8px',
-                          borderRadius: '6px'
-                        }}>
-                          {slot.fee}
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                          {slot.date}
                         </span>
                       </div>
 
@@ -1781,29 +1501,14 @@ function AdminDashboardContent() {
                       {/* Room & Duration */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.78rem', color: '#64748b' }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <MapPin size={13} /> {slot.room}
-                        </span>
-                        <span>•</span>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                           <Clock size={13} /> {slot.duration}
                         </span>
                       </div>
                     </div>
 
-                    {/* Reserve Button */}
-                    <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
-                      <button
-                        onClick={() => handleOpenReserveModal(slot)}
-                        className="btn btn-primary"
-                        style={{
-                          width: '100%',
-                          fontSize: '0.88rem',
-                          padding: '9px 14px',
-                          borderRadius: '10px'
-                        }}
-                      >
-                        <UserPlus size={16} /> Reserve for Patient
-                      </button>
+                    {/* Booking happens at the Reception desk (real patient record required) */}
+                    <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid #f1f5f9', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      Free — book from the Reception desk
                     </div>
                   </div>
                 ))}
@@ -1982,8 +1687,8 @@ function AdminDashboardContent() {
                       alignItems: 'center',
                       fontSize: '0.85rem'
                     }}>
-                      <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Total Patients Seen:</span>
-                      <strong style={{ color: '#4f46e5', fontSize: '1rem' }}>{doc.totalTreated} Patients</strong>
+                      <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Completed Visits:</span>
+                      <strong style={{ color: '#4f46e5', fontSize: '1rem' }}>{treatedPatients.filter(t => String(t.doctorId) === String(doc.id)).length} Patients</strong>
                     </div>
                   </div>
 
@@ -2004,7 +1709,7 @@ function AdminDashboardContent() {
                       className="btn btn-primary btn-sm"
                       style={{ flex: 1, fontSize: '0.8rem' }}
                     >
-                      View Slots ({doc.patientsCountToday})
+                      View Appointments ({takenSlots.filter(s => String(s.doctorId) === String(doc.id) && s.status !== 'cancelled').length})
                     </button>
                   </div>
                 </div>
@@ -2026,7 +1731,7 @@ function AdminDashboardContent() {
                     Completed & Treated Patients Roster ({treatedPatients.length})
                   </h2>
                   <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-                    Historical log of finished consultations with diagnosis details and fee records.
+                    Finished consultations with the doctor&apos;s notes and prescriptions.
                   </p>
                 </div>
                 <button
@@ -2038,8 +1743,26 @@ function AdminDashboardContent() {
               </div>
             </div>
 
+            {treatedError && (
+              <div className="glass-panel" style={{ padding: '14px 18px', marginBottom: '14px', borderLeft: '4px solid #e11d48', color: '#b91c1c', fontSize: '0.88rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                <span><AlertCircle size={16} style={{ verticalAlign: 'middle' }} /> {treatedError}</span>
+                <button onClick={fetchTreated} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>
+              </div>
+            )}
+            {loadingTreated && (
+              <div className="glass-panel" style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <Loader2 size={20} className="spin-icon" /> Loading completed visits…
+              </div>
+            )}
+            {!loadingTreated && !treatedError && treatedPatients.length === 0 && (
+              <div className="glass-panel" style={{ padding: '50px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <CheckCircle2 size={40} style={{ color: '#cbd5e1', margin: '0 auto 10px' }} />
+                <div>No completed visits yet.</div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {treatedPatients.map((treated) => (
+              {!loadingTreated && treatedPatients.map((treated) => (
                 <div
                   key={treated.id}
                   className="glass-panel"
@@ -2078,7 +1801,8 @@ function AdminDashboardContent() {
                       </div>
 
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        Treated on <strong>{treated.treatedDate}</strong> by <strong>{treated.doctorName}</strong> ({treated.specialty})
+                        Treated on <strong>{treated.date} ({treated.slotTime})</strong> by <strong>{treated.doctorName}</strong>{treated.specialty ? ` (${treated.specialty})` : ''}
+                        {treated.forPerson && treated.forPerson !== 'Self' ? ` • for ${treated.forPerson}` : ''}
                       </div>
 
                       {/* Clinical Diagnosis Note */}
@@ -2091,24 +1815,19 @@ function AdminDashboardContent() {
                         fontSize: '0.88rem'
                       }}>
                         <div style={{ fontWeight: 700, color: '#334155', marginBottom: '2px' }}>
-                          Primary Diagnosis: <span style={{ fontWeight: 500, color: '#0f172a' }}>{treated.diagnosis}</span>
+                          Doctor&apos;s Notes: <span style={{ fontWeight: 500, color: '#0f172a' }}>{treated.doctorNotes || 'No notes recorded'}</span>
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#475569', marginTop: '4px' }}>
-                          <strong>Prescribed Rx:</strong> {treated.rxSummary}
+                          <strong>Prescribed Rx:</strong> {treated.prescription || 'None recorded'}
                         </div>
                       </div>
                     </div>
 
-                    {/* Fee Paid & Followup */}
+                    {/* Follow-up */}
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#15803d' }}>
-                        {treated.feePaid} ETB
-                      </div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                        Paid via {treated.paymentMethod}
-                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Follow-up</div>
                       <div style={{
-                        marginTop: '8px',
+                        marginTop: '4px',
                         fontSize: '0.78rem',
                         fontWeight: 600,
                         background: '#e0e7ff',
@@ -2117,7 +1836,7 @@ function AdminDashboardContent() {
                         borderRadius: '6px',
                         display: 'inline-block'
                       }}>
-                        {treated.followUp}
+                        {treated.followUpDate || 'None scheduled'}
                       </div>
                     </div>
                   </div>
@@ -2741,11 +2460,11 @@ function AdminDashboardContent() {
                   Onboard New Clinic Doctor
                 </h3>
                 <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  Register a new practitioner to Bole Branch clinical roster.
+                  Creates the doctor's login and clinic schedule in one step.
                 </p>
               </div>
               <button
-                onClick={() => setShowAddDoctorModal(false)}
+                onClick={() => { setShowAddDoctorModal(false); setDoctorFormError(''); }}
                 style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
               >
                 <X size={20} />
@@ -2753,111 +2472,140 @@ function AdminDashboardContent() {
             </div>
 
             <form onSubmit={handleAddDoctorSubmit}>
-              <div className="form-group">
-                <label className="form-label">Doctor Full Name</label>
-                <input
-                  type="text"
-                  required
-                  className="form-control"
-                  placeholder="e.g. Dr. Meron Teshome"
-                  value={newDoctorForm.name}
-                  onChange={(e) => setNewDoctorForm({ ...newDoctorForm, name: e.target.value })}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Medical Specialization</label>
-                <select
-                  className="form-control"
-                  value={newDoctorForm.specialty}
-                  onChange={(e) => setNewDoctorForm({ ...newDoctorForm, specialty: e.target.value })}
-                >
-                  <option value="Internal Medicine & General Practice">Internal Medicine & General Practice</option>
-                  <option value="Pediatrics & Child Health">Pediatrics & Child Health</option>
-                  <option value="Obstetrics & Gynecology (OB/GYN)">Obstetrics & Gynecology (OB/GYN)</option>
-                  <option value="Cardiology & Hypertension Clinic">Cardiology & Hypertension Clinic</option>
-                  <option value="Dermatology & Skin Health">Dermatology & Skin Health</option>
-                  <option value="Orthopedic Surgery & Joints">Orthopedic Surgery & Joints</option>
-                  <option value="Ophthalmology (Eye Clinic)">Ophthalmology (Eye Clinic)</option>
-                </select>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Ethiopian MOH License #</label>
-                  <input
-                    type="text"
-                    required
-                    className="form-control"
-                    placeholder="ETH-MOH-DOC-XXXX"
-                    value={newDoctorForm.licenseNumber}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, licenseNumber: e.target.value })}
-                  />
+              {doctorFormError && (
+                <div style={{ background: '#fff1f2', border: '1px solid #fecdd3', color: '#b91c1c', padding: '10px 12px', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '14px' }}>
+                  <AlertCircle size={15} style={{ verticalAlign: 'middle' }} /> {doctorFormError}
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Consultation Room / Suite</label>
-                  <input
-                    type="text"
-                    required
-                    className="form-control"
-                    placeholder="e.g. Suite 208"
-                    value={newDoctorForm.room}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, room: e.target.value })}
-                  />
-                </div>
-              </div>
+              )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase', margin: '0 0 8px' }}>Login account</div>
+              <div className="form-group">
+                <label className="form-label">Full Name</label>
+                <input type="text" required minLength={2} className="form-control" placeholder="e.g. Meron Teshome"
+                  value={newDoctorForm.name} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, name: e.target.value })} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Email (login)</label>
+                  <input type="email" required className="form-control" placeholder="doctor@clinic.et"
+                    value={newDoctorForm.email} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, email: e.target.value })} />
+                </div>
                 <div className="form-group">
                   <label className="form-label">Phone Number</label>
-                  <input
-                    type="text"
-                    required
-                    className="form-control"
-                    placeholder="+251 91 123 4567"
-                    value={newDoctorForm.phone}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, phone: e.target.value })}
-                  />
+                  <input type="tel" required minLength={9} className="form-control" placeholder="0911 000 000"
+                    value={newDoctorForm.phoneNumber} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, phoneNumber: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Initial Password</label>
+                  <input type="text" required minLength={8} className="form-control" placeholder="8+ chars, Aa1"
+                    pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}"
+                    title="At least 8 characters with an uppercase letter, a lowercase letter and a number"
+                    value={newDoctorForm.password} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, password: e.target.value })} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Email Address</label>
-                  <input
-                    type="email"
-                    className="form-control"
-                    placeholder="doctor@clinic.et"
-                    value={newDoctorForm.email}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, email: e.target.value })}
-                  />
+                  <label className="form-label">Gender</label>
+                  <select className="form-control" value={newDoctorForm.gender} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, gender: e.target.value })}>
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                    <option value="other">Other / not specified</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Address (optional)</label>
+                <input type="text" className="form-control" placeholder="Bole, Addis Ababa"
+                  value={newDoctorForm.address} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, address: e.target.value })} />
+              </div>
+
+              <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase', margin: '16px 0 8px' }}>Clinical profile</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Specialization</label>
+                  <input type="text" required minLength={2} className="form-control" placeholder="e.g. Pediatrics"
+                    value={newDoctorForm.specialization} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, specialization: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">MOH License Number</label>
+                  <input type="text" required minLength={3} className="form-control" placeholder="ETH-MED-2026-001"
+                    value={newDoctorForm.licenseNumber} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, licenseNumber: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Years of Experience</label>
+                  <input type="number" min={0} max={70} className="form-control"
+                    value={newDoctorForm.yearsOfExperience} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, yearsOfExperience: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Short Bio (optional)</label>
+                  <input type="text" maxLength={1000} className="form-control"
+                    value={newDoctorForm.bio} onChange={(e) => setNewDoctorForm({ ...newDoctorForm, bio: e.target.value })} />
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Shift Hours</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="08:30 AM - 04:30 PM"
-                    value={newDoctorForm.shift}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, shift: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Working Days</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Monday - Friday"
-                    value={newDoctorForm.workingDays}
-                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, workingDays: e.target.value })}
-                  />
+              <div className="form-group">
+                <label className="form-label">Working Days</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {WEEK_DAYS.map((day) => {
+                    const on = newDoctorForm.availableDays.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => setNewDoctorForm({
+                          ...newDoctorForm,
+                          availableDays: on
+                            ? newDoctorForm.availableDays.filter((d) => d !== day)
+                            : WEEK_DAYS.filter((d) => d === day || newDoctorForm.availableDays.includes(d))
+                        })}
+                        className="btn btn-sm"
+                        style={{
+                          background: on ? '#4f46e5' : '#f1f5f9',
+                          color: on ? 'white' : '#475569',
+                          fontSize: '0.78rem',
+                          padding: '5px 10px',
+                          borderRadius: '8px'
+                        }}
+                      >
+                        {day.slice(0, 3)}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px' }}>
+                <div className="form-group">
+                  <label className="form-label">Shift Start</label>
+                  <input type="time" required className="form-control" value={newDoctorForm.startTime}
+                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, startTime: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Shift End</label>
+                  <input type="time" required className="form-control" value={newDoctorForm.endTime}
+                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, endTime: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Break Start</label>
+                  <input type="time" className="form-control" value={newDoctorForm.breakStart}
+                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, breakStart: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Break End</label>
+                  <input type="time" className="form-control" value={newDoctorForm.breakEnd}
+                    onChange={(e) => setNewDoctorForm({ ...newDoctorForm, breakEnd: e.target.value })} />
+                </div>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                40-minute slots are generated automatically from this schedule. Leave both break fields empty for no break.
+              </p>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                 <button
                   type="button"
-                  onClick={() => setShowAddDoctorModal(false)}
+                  onClick={() => { setShowAddDoctorModal(false); setDoctorFormError(''); }}
                   className="btn btn-secondary"
                   style={{ flex: 1 }}
                 >
@@ -2865,173 +2613,11 @@ function AdminDashboardContent() {
                 </button>
                 <button
                   type="submit"
+                  disabled={submittingDoctor}
                   className="btn btn-primary"
                   style={{ flex: 1.5 }}
                 >
-                  <UserPlus size={16} /> Save Doctor & Generate Slots
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {/* MODAL 2: QUICK RESERVATION MODAL (ለታካሚ ስሎት መያዝ)              */}
-      {/* ════════════════════════════════════════════════════════════════ */}
-      {showReserveModal && selectedSlotToReserve && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(6px)',
-          zIndex: 100,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px'
-        }}>
-          <div className="glass-panel" style={{
-            width: '100%',
-            maxWidth: '520px',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            padding: '30px',
-            background: 'white'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-              <div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
-                  Reserve Slot: {selectedSlotToReserve.time}
-                </h3>
-                <div style={{ fontSize: '0.85rem', color: '#4f46e5', fontWeight: 600, marginTop: '2px' }}>
-                  {selectedSlotToReserve.doctorName} • {selectedSlotToReserve.specialty}
-                </div>
-              </div>
-              <button
-                onClick={() => setShowReserveModal(false)}
-                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleConfirmReservation}>
-              <div className="form-group">
-                <label className="form-label">Patient Full Name</label>
-                <input
-                  type="text"
-                  required
-                  className="form-control"
-                  placeholder="e.g. Martha Haile"
-                  value={reserveForm.patientName}
-                  onChange={(e) => setReserveForm({ ...reserveForm, patientName: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Gender</label>
-                  <select
-                    className="form-control"
-                    value={reserveForm.gender}
-                    onChange={(e) => setReserveForm({ ...reserveForm, gender: e.target.value })}
-                  >
-                    <option value="male">Male (ወንድ)</option>
-                    <option value="female">Female (ሴት)</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Age</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    placeholder="e.g. 34"
-                    value={reserveForm.age}
-                    onChange={(e) => setReserveForm({ ...reserveForm, age: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Phone Number</label>
-                  <input
-                    type="text"
-                    required
-                    className="form-control"
-                    placeholder="+251 91 234 5678"
-                    value={reserveForm.phoneNumber}
-                    onChange={(e) => setReserveForm({ ...reserveForm, phoneNumber: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Clinic Card #</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={reserveForm.cardNumber}
-                    onChange={(e) => setReserveForm({ ...reserveForm, cardNumber: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Chief Complaint / Reason for Visit</label>
-                <textarea
-                  rows={2}
-                  className="form-control"
-                  placeholder="e.g. High fever, headache and throat soreness"
-                  value={reserveForm.chiefComplaint}
-                  onChange={(e) => setReserveForm({ ...reserveForm, chiefComplaint: e.target.value })}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Payment Method Collected</label>
-                <select
-                  className="form-control"
-                  value={reserveForm.paymentMethod}
-                  onChange={(e) => setReserveForm({ ...reserveForm, paymentMethod: e.target.value })}
-                >
-                  <option value="Telebirr">Telebirr (ቴሌብር)</option>
-                  <option value="CBE Birr">CBE Birr (የኢትዮጵያ ንግድ ባንክ)</option>
-                  <option value="Chapa">Chapa / Card</option>
-                  <option value="Cash at Desk">Cash at Reception Desk</option>
-                </select>
-              </div>
-
-              <div style={{
-                background: '#f8fafc',
-                borderRadius: '10px',
-                padding: '12px 14px',
-                marginBottom: '20px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '0.88rem'
-              }}>
-                <span style={{ color: 'var(--text-muted)' }}>Card Fee (100) + Consultation (400):</span>
-                <strong style={{ color: '#15803d', fontSize: '1rem' }}>500 ETB Total</strong>
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowReserveModal(false)}
-                  className="btn btn-secondary"
-                  style={{ flex: 1 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  style={{ flex: 1.5 }}
-                >
-                  Confirm Reservation & Queue
+                  {submittingDoctor ? <><Loader2 size={16} className="spin-icon" /> Creating…</> : <><UserPlus size={16} /> Create Doctor Account</>}
                 </button>
               </div>
             </form>
@@ -3086,16 +2672,12 @@ function AdminDashboardContent() {
                 <strong>{showPatientDetailModal.patientName}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Gender & Age:</span>
-                <span>{showPatientDetailModal.gender === 'male' ? 'Male' : 'Female'}, {showPatientDetailModal.age} Years</span>
+                <span style={{ color: 'var(--text-muted)' }}>Visit For:</span>
+                <span>{showPatientDetailModal.forPerson === 'Self' ? 'Account holder' : showPatientDetailModal.forPerson}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Ethiopian National ID (Fayda):</span>
-                <span>{showPatientDetailModal.nationalId}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Phone Number:</span>
-                <span>{showPatientDetailModal.phoneNumber}</span>
+                <span style={{ color: 'var(--text-muted)' }}>Status & Queue:</span>
+                <span>{showPatientDetailModal.status}{showPatientDetailModal.queueNumber ? ` • Queue #${showPatientDetailModal.queueNumber}` : ''}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Assigned Physician:</span>
@@ -3105,16 +2687,17 @@ function AdminDashboardContent() {
                 <span style={{ color: 'var(--text-muted)' }}>Appointment Slot:</span>
                 <span>{showPatientDetailModal.slotTime} ({showPatientDetailModal.date})</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Fee & Payment:</span>
-                <span style={{ color: '#15803d', fontWeight: 700 }}>{showPatientDetailModal.feePaid} ETB Paid ({showPatientDetailModal.paymentMethod})</span>
-              </div>
               <div style={{ marginTop: '8px' }}>
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontWeight: 700 }}>Chief Complaint:</span>
                 <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '8px', marginTop: '4px', fontSize: '0.85rem' }}>
                   {showPatientDetailModal.chiefComplaint}
                 </div>
               </div>
+              {showPatientDetailModal.cancelReason && (
+                <div style={{ fontSize: '0.85rem', color: '#b91c1c' }}>
+                  <strong>Cancellation reason:</strong> {showPatientDetailModal.cancelReason}
+                </div>
+              )}
             </div>
 
             <button
@@ -3212,14 +2795,14 @@ function AdminDashboardContent() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: 'var(--text-muted)' }}>Portal URL:</span>
-                    <span>http://localhost:3000/login</span>
+                    <span>{typeof window !== 'undefined' ? window.location.origin : ''}/login</span>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button
                     onClick={() => {
-                      const text = `CareSync Front Desk Credentials:\nName: ${createdReceptionistCreds.name}\nEmail: ${createdReceptionistCreds.email}\nPassword: ${createdReceptionistCreds.password}\nPortal: http://localhost:3000/login`;
+                      const text = `CareSync Front Desk Credentials:\nName: ${createdReceptionistCreds.name}\nEmail: ${createdReceptionistCreds.email}\nPassword: ${createdReceptionistCreds.password}\nPortal: ${window.location.origin}/login`;
                       navigator.clipboard.writeText(text);
                       setCopiedCreds(true);
                       setTimeout(() => setCopiedCreds(false), 3000);

@@ -3,15 +3,16 @@ import { createUser , verifyEmail,loginUser ,logoutUser, refreshAccessToken, for
     ,changePassword,uploadProfile,updateProfile,createPatientProfile,getProfileById,requestEmailUpdate,
     confirmEmailUpdate,deleteMe,adminUpdateUserStatus,getUsers,getPublicDoctorAccountById,createFamilyMember,updateFamilyMember,deleteFamilyMember,getAllFamilyMembers,getOneFamilyMember,
     createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-    createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal
+    createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal,
+    searchPatientsForStaff, registerWalkInPatient
 } from '../controllers/user.controller.js';
-import { protect , authorizeAdmin } from '../middleware/auth.js';
+import { protect , authorizeAdmin, authorizeStaff } from '../middleware/auth.js';
 import { requireInternalService } from '../middleware/internal.js';
 import upload from '../middleware/upload.js';
 import {authRateLimiter, generalRateLimiter} from '../middleware/rateLimiter.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, changePasswordSchema } from '../validations/auth.validation.js';
-import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema, createReceptionistSchema, createDoctorSchema } from '../validations/profile.validation.js';
+import { updateProfileSchema, patientProfileSchema, getProfileByIdSchema, emailUpdateSchema, adminUpdateStatusSchema, getUsersSchema, createReceptionistSchema, createDoctorSchema, searchPatientsSchema, registerWalkInPatientSchema } from '../validations/profile.validation.js';
 import {
   createFamilyMemberSchema,
   updateFamilyMemberSchema,
@@ -47,6 +48,10 @@ router.get('/getUsers', protect, authorizeAdmin, generalRateLimiter, validate(ge
 router.post('/admin/receptionist', protect, authorizeAdmin, generalRateLimiter, validate(createReceptionistSchema), createReceptionist);
 router.get('/admin/receptionists', protect, authorizeAdmin, generalRateLimiter, getReceptionists);
 router.patch('/admin/receptionists/:id/toggle', protect, authorizeAdmin, generalRateLimiter, toggleReceptionistStatus);
+
+// Front desk (admin + receptionist): find or register walk-in patients before booking them
+router.get('/staff/patients', protect, authorizeStaff, generalRateLimiter, validate(searchPatientsSchema), searchPatientsForStaff);
+router.post('/staff/patients', protect, authorizeStaff, generalRateLimiter, validate(registerWalkInPatientSchema), registerWalkInPatient);
 
 // Internal (service-to-service only): appointment-service verifies family members for bookings
 router.get('/internal/family-members/:id', requireInternalService, getFamilyMemberInternal);

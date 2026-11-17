@@ -10,8 +10,11 @@ const parseOrigins = (value) =>
 
 export const getAllowedOrigins = () => {
   const origins = parseOrigins(process.env.FRONTEND_URL);
-  if (process.env.NODE_ENV !== 'production') {
-    origins.push('http://localhost:3000', 'http://127.0.0.1:3000');
+  const defaultLocalOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  for (const local of defaultLocalOrigins) {
+    if (!origins.includes(local)) {
+      origins.push(local);
+    }
   }
   return origins;
 };

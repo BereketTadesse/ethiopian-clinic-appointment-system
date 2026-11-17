@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
 import { clinicApi } from '@/lib/api';
+import { formatClinicRange } from '@/lib/time';
 import {
   Building2,
   CalendarOff,
@@ -1380,7 +1381,7 @@ function AdminClinicManagementContent() {
                         {runtimeStatus?.isOpen ? (
                           <>
                             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 10px #4ade80', display: 'inline-block' }} />
-                            <span>Open Today ({clinicProfile.workingHours.openTime} - {clinicProfile.workingHours.closeTime})</span>
+                            <span>Open Today · {formatClinicRange(clinicProfile.workingHours.openTime, clinicProfile.workingHours.closeTime)}</span>
                           </>
                         ) : (
                           <>
@@ -1483,7 +1484,7 @@ function AdminClinicManagementContent() {
                             <span>•</span>
                             <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                               <Clock size={15} style={{ color: '#059669' }} />
-                              Standard Shift: {clinicProfile.workingHours.openTime} - {clinicProfile.workingHours.closeTime}
+                              Standard Shift: {formatClinicRange(clinicProfile.workingHours.openTime, clinicProfile.workingHours.closeTime)}
                             </span>
                           </div>
                         </div>
@@ -1741,7 +1742,7 @@ function AdminClinicManagementContent() {
                         <div>
                           <span style={{ fontSize: '0.74rem', textTransform: 'uppercase', color: '#6d28d9', fontWeight: 800 }}>Standard Working Shift</span>
                           <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#4338ca', marginTop: '2px' }}>
-                            {clinicProfile.workingHours.openTime} — {clinicProfile.workingHours.closeTime}
+                            {formatClinicRange(clinicProfile.workingHours.openTime, clinicProfile.workingHours.closeTime)}
                           </div>
                         </div>
                         <div style={{ fontSize: '0.82rem', color: '#6d28d9', fontWeight: 700, background: 'rgba(255,255,255,0.7)', padding: '4px 10px', borderRadius: '8px' }}>

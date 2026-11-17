@@ -110,6 +110,7 @@ services:
       - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET:-${JWT_SECRET}}
       - USER_SERVICE_URL=http://user-service:3001
       - CLINIC_SERVICE_URL=http://clinic-service:3002
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       - mongo
       - redis

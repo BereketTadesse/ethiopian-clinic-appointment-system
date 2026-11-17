@@ -18,6 +18,7 @@ import {
   Sparkles,
   ExternalLink
 } from 'lucide-react';
+import { formatClinicRange } from '@/lib/time';
 
 export default function TopHeader({ onToggleSidebar }) {
   const pathname = usePathname();
@@ -107,6 +108,7 @@ export default function TopHeader({ onToggleSidebar }) {
     try {
       setTodayStr(
         new Date().toLocaleDateString('en-US', {
+          timeZone: 'Africa/Addis_Ababa',
           weekday: 'short',
           month: 'short',
           day: 'numeric'
@@ -222,7 +224,7 @@ export default function TopHeader({ onToggleSidebar }) {
             }}
             suppressHydrationWarning
           />
-          <span suppressHydrationWarning>{isOpen ? `Open (${openTime} - ${closeTime})` : 'Closed'}</span>
+          <span suppressHydrationWarning>{isOpen ? `Open · ${formatClinicRange(openTime, closeTime)}` : 'Closed'}</span>
         </div>
 
         {/* Date Display */}

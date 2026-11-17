@@ -79,7 +79,10 @@ clinicApi.interceptors.response.use(
           return clinicApi(originalRequest);
         }
       } catch (refreshErr) {
-        console.warn('Session expired or unauthorized');
+        // Session can't be renewed: clear it and send the user to log in (same as the user API)
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);
@@ -121,7 +124,10 @@ appointmentApi.interceptors.response.use(
           return appointmentApi(originalRequest);
         }
       } catch (refreshErr) {
-        console.warn('Session expired or unauthorized');
+        // Session can't be renewed: clear it and send the user to log in (same as the user API)
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);

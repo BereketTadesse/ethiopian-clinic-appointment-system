@@ -607,8 +607,15 @@ export default function Sidebar({ isOpen, onClose }) {
           {isPatient && (
             <div style={{ marginTop: 'auto', paddingTop: '10px' }}>
               <Link
-                href="/dashboard"
-                onClick={onClose}
+                href="/dashboard?book=1"
+                onClick={(e) => {
+                  onClose?.();
+                  // Already on the dashboard: open the booking flow in place.
+                  if (pathname === '/dashboard') {
+                    e.preventDefault();
+                    window.dispatchEvent(new Event('app:open-booking'));
+                  }
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',

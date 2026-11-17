@@ -1638,11 +1638,100 @@ const getFamilyMemberInternal = async (req, res) => {
   }
 };
 
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const PUBLIC_PATIENT_FIELDS = '_id name phoneNumber email gender birthDate address isActive createdAt';
+
+/**
+ * @desc    Front desk: find existing patients by name, phone or email (for walk-in bookings)
+ * @route   GET /api/users/staff/patients?search=
+ * @access  Private (Admin, Receptionist)
+ */
+const searchPatientsForStaff = async (req, res) => {
+  try {
+    const term = escapeRegex(String(req.query.search).trim());
+    const digits = String(req.query.search).replace(/\D/g, '');
+    const or = [
+      { name: { $regex: term, $options: 'i' } },
+      { email: { $regex: term, $options: 'i' } },
+      { phoneNumber: { $regex: term, $options: 'i' } }
+    ];
+    // "0911 22 33 44" should still find "0911223344"
+    if (digits.length >= 4) or.push({ phoneNumber: { $regex: escapeRegex(digits.slice(-9)) } });
+
+    const patients = await User.find({ role: 'patient', $or: or })
+      .select(PUBLIC_PATIENT_FIELDS)
+      .sort({ name: 1 })
+      .limit(20)
+      .lean();
+
+    // Never expose the internal placeholder address used for walk-ins without email
+    const data = patients.map((p) => ({ ...p, email: p.email?.endsWith('@walkin.caresync.local') ? null : p.email }));
+    return res.status(200).json({ success: true, count: data.length, data });
+  } catch (error) {
+    console.error(`❌ Staff patient search error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
+/**
+ * @desc    Front desk: register a walk-in patient so they can be booked.
+ *          Email is optional (many walk-ins have none): a unique internal placeholder is stored
+ *          instead, and the account gets a random password. If the patient later wants to use the
+ *          app, they can be given a real email via the profile and reset their password.
+ * @route   POST /api/users/staff/patients
+ * @access  Private (Admin, Receptionist)
+ */
+const registerWalkInPatient = async (req, res) => {
+  try {
+    const { name, phoneNumber, gender, email, address, birthDate } = req.body;
+    const phone = phoneNumber.trim();
+    const realEmail = email ? email.toLowerCase().trim() : null;
+
+    // Same phone or email already registered -> hand back that patient instead of a duplicate
+    const existing = await User.findOne({
+      $or: [{ phoneNumber: phone }, ...(realEmail ? [{ email: realEmail }] : [])]
+    }).select(PUBLIC_PATIENT_FIELDS + ' role').lean();
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: existing.role === 'patient'
+          ? 'A patient with this phone number or email is already registered. Use the existing record.'
+          : 'This phone number or email belongs to a staff account.',
+        data: existing.role === 'patient' ? existing : null
+      });
+    }
+
+    const placeholderEmail = `walkin-${crypto.randomUUID()}@walkin.caresync.local`;
+    const randomPassword = crypto.randomBytes(24).toString('base64url');
+
+    const patient = await User.create({
+      name: name.trim(),
+      email: realEmail || placeholderEmail,
+      phoneNumber: phone,
+      password: await bcrypt.hash(randomPassword, await bcrypt.genSalt(10)),
+      gender,
+      address: address?.trim() || 'Addis Ababa, Ethiopia',
+      ...(birthDate ? { birthDate } : {}),
+      role: 'patient',
+      isVerified: true, // registered in person at the front desk
+      isActive: true
+    });
+
+    const data = await User.findById(patient._id).select(PUBLIC_PATIENT_FIELDS).lean();
+    if (!realEmail) data.email = null;
+    return res.status(201).json({ success: true, message: 'Walk-in patient registered.', data });
+  } catch (error) {
+    console.error(`❌ Walk-in registration error: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+};
+
 export {
   createUser, verifyEmail, loginUser, logoutUser, refreshAccessToken, forgotPassword, resetPassword, changePassword, uploadProfile, updateProfile, createPatientProfile, getProfileById,
   getPublicDoctorAccountById, requestEmailUpdate, confirmEmailUpdate, deleteMe, getUsers, adminUpdateUserStatus,
   createFamilyMember, updateFamilyMember, deleteFamilyMember, getAllFamilyMembers, getOneFamilyMember,
   createFamilyMemberProfile, getFamilyMemberProfile, updateFamilyMemberProfile,
-  createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal
+  createReceptionist, getReceptionists, toggleReceptionistStatus, createDoctor, getFamilyMemberInternal,
+  searchPatientsForStaff, registerWalkInPatient
 };
 

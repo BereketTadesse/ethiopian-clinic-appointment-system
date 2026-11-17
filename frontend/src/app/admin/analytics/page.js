@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
+import { useRequireRole } from '@/lib/useRequireRole';
 import {
   TrendingUp,
   Users,
@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 
 export default function AdminAnalyticsPage() {
-  const { user } = useAuth();
+  // Admin-only page: redirects to /login (or the user's own home) otherwise
+  const { user, allowed } = useRequireRole('admin');
   const router = useRouter();
 
   // Timeframe Filter: 'month' | 'week' | 'today'
@@ -92,9 +93,31 @@ export default function AdminAnalyticsPage() {
     { name: 'Dr. Yared Melaku', specialty: 'Cardiology Clinic', patients: 32, revenue: '22,400 ETB', capacity: '75%' },
   ];
 
+  if (!allowed) {
+    return (
+      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontWeight: 700 }}>
+        Loading analytics…
+      </div>
+    );
+  }
+
   return (
     <div style={{ backgroundColor: 'var(--bg-page)', minHeight: '94vh', padding: '30px 0 60px' }}>
       <div className="container">
+
+        {/* Honest notice: everything on this page is hard-coded */}
+        <div style={{
+          background: '#fffbeb',
+          border: '1px solid #fcd34d',
+          color: '#92400e',
+          borderRadius: '10px',
+          padding: '10px 14px',
+          marginBottom: '16px',
+          fontSize: '0.88rem',
+          fontWeight: 600
+        }}>
+          ⚠️ Sample figures — not connected to live data yet.
+        </div>
 
         {/* Back Link & Navigation */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>

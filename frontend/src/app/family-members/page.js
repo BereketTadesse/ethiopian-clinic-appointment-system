@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import API from '@/lib/api';
+import API, { appointmentApi } from '@/lib/api';
 import {
   Users,
   Plus,
@@ -59,10 +59,28 @@ export default function FamilyMembersPage() {
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Real card numbers per person (familyMemberId -> cardNumber). A member only gets a card
+  // at their first booking, so a missing entry means "not assigned yet".
+  const [cardNumbers, setCardNumbers] = useState({});
+
+  const fetchCardNumbers = async () => {
+    try {
+      const { data } = await appointmentApi.get('/cards/family');
+      const map = {};
+      (data?.data || []).forEach((card) => {
+        if (card.familyMemberId) map[String(card.familyMemberId)] = card.cardNumber;
+      });
+      setCardNumbers(map);
+    } catch (err) {
+      console.error('Fetch family cards error', err);
+    }
+  };
+
   // 1. Fetch All Family Members from Backend
   const fetchMembers = async () => {
     try {
       setLoading(true);
+      fetchCardNumbers();
       const { data } = await API.get('/users/getAllFamilyMembers');
       setMembers(data.members || data.familyMembers || []);
     } catch (err) {
@@ -676,7 +694,7 @@ export default function FamilyMembersPage() {
                     Official Card Number (የካርድ ቁጥር)
                   </div>
                   <div style={{ fontSize: '1.35rem', fontWeight: 900, fontFamily: 'monospace', letterSpacing: '1px', marginTop: '2px', color: '#ffffff' }}>
-                    CLN-2026-{String(activeCardMember._id || '00000').slice(-5).padStart(5, '0')}
+                    {cardNumbers[String(activeCardMember._id)] || 'Assigned at first booking'}
                   </div>
                 </div>
 
@@ -715,16 +733,11 @@ export default function FamilyMembersPage() {
                 </div>
 
                 <div>
-                  <div style={{ fontSize: '0.7rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Card Fee & Status</div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#86efac', marginTop: '2px' }}>
-                    ● Paid (100 ETB) & Active
+                  <div style={{ fontSize: '0.7rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Consultation Fee</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, marginTop: '2px' }}>
+                    100 ETB — pay at clinic reception
                   </div>
                 </div>
-              </div>
-
-              <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.12)', paddingTop: '8px', fontSize: '0.72rem', color: '#cbd5e1', display: 'flex', justifyContent: 'space-between' }}>
-                <span>TXN Ref: <strong style={{ fontFamily: 'monospace', color: '#ffffff' }}>TXN-TB-2026-{String(activeCardMember._id).slice(-5)}</strong></span>
-                <span>Payment: <strong style={{ color: '#86efac' }}>Telebirr Verified</strong></span>
               </div>
 
               {/* Card Footer */}

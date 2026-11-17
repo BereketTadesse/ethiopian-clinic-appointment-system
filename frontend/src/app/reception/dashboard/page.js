@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
 import { clinicApi, appointmentApi } from '@/lib/api';
 import API from '@/lib/api';
+import { useRequireRole } from '@/lib/useRequireRole';
+import { clinicToday, formatClinicRange, formatClinicTime, clinicNowHHMM } from '@/lib/time';
 import {
   ClipboardList,
   User,
@@ -110,446 +112,374 @@ function ReceptionDashboardContent() {
   const [showCancelModal, setShowCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
 
-  // Walk-in booking form
-  const [walkinForm, setWalkinForm] = useState({
-    patientName: '',
-    phoneNumber: '+251 9',
-    gender: 'female',
-    age: '28',
-    chiefComplaint: '',
-    paymentMethod: 'Cash',
-    feeAmount: 500
-  });
+  // Walk-in booking: find (or register) the patient first, then book a real appointment
+  const emptyNewPatient = { name: '', phoneNumber: '', gender: 'female', email: '', address: '' };
+  const [walkinStep, setWalkinStep] = useState('find'); // 'find' | 'register'
+  const [patientSearch, setPatientSearch] = useState('');
+  const [patientResults, setPatientResults] = useState([]);
+  const [patientSearchDone, setPatientSearchDone] = useState(false);
+  const [searchingPatients, setSearchingPatients] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [newPatient, setNewPatient] = useState(emptyNewPatient);
+  const [existingMatch, setExistingMatch] = useState(null);
+  const [walkinReason, setWalkinReason] = useState('');
+  const [walkinError, setWalkinError] = useState('');
+  const [walkinSubmitting, setWalkinSubmitting] = useState(false);
 
-  // Clinic Status State
+  // Patient registry lookup tab
+  const [registrySearch, setRegistrySearch] = useState('');
+  const [registryResults, setRegistryResults] = useState([]);
+  const [registrySearched, setRegistrySearched] = useState(false);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryError, setRegistryError] = useState('');
+
+  // Clinic Status State (null = unknown / could not be loaded)
   const [clinicStatus, setClinicStatus] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
 
   // Doctors State
   const [doctors, setDoctors] = useState([]);
   const [loadingDoctors, setLoadingDoctors] = useState(false);
+  const [rosterError, setRosterError] = useState('');
   const [selectedDoctorForSlots, setSelectedDoctorForSlots] = useState(null);
 
-  // Today's Queue Data (with live updates & fallback)
-  const [queue, setQueue] = useState([
-    {
-      id: 'apt-001',
-      slotTime: '08:45 AM',
-      date: 'Today, Oct 17',
-      patientName: 'Bereket Tadesse',
-      gender: 'male',
-      age: 28,
-      phoneNumber: '+251 91 144 5566',
-      cardNumber: 'CLN-2026-00001',
-      nationalId: 'ET-FAYDA-94821',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      chiefComplaint: 'Persistent dry cough, mild chest tightness and evening fever for 3 days.',
-      status: 'in_consultation',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      bookedAt: 'Today, 07:30 AM',
-      checkedInAt: '08:35 AM'
-    },
-    {
-      id: 'apt-002',
-      slotTime: '09:30 AM',
-      date: 'Today, Oct 17',
-      patientName: 'Almaz Wolde (Mother)',
-      gender: 'female',
-      age: 58,
-      phoneNumber: '+251 91 199 8877',
-      cardNumber: 'CLN-2026-00042',
-      nationalId: 'ET-FAYDA-38192',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      chiefComplaint: 'Hypertension checkup and renewal of daily anti-hypertensive medication.',
-      status: 'checked_in',
-      feePaid: 500,
-      paymentMethod: 'CBE Birr',
-      bookedAt: 'Today, 08:10 AM',
-      checkedInAt: '09:15 AM'
-    },
-    {
-      id: 'apt-003',
-      slotTime: '10:15 AM',
-      date: 'Today, Oct 17',
-      patientName: 'Natnael Girma',
-      gender: 'male',
-      age: 7,
-      phoneNumber: '+251 92 443 2199',
-      cardNumber: 'CLN-2026-00019',
-      nationalId: 'ET-FAYDA-11029',
-      doctorId: 'doc-102',
-      doctorName: 'Dr. Bethlehem Haile',
-      specialty: 'Pediatrics & Child Health',
-      chiefComplaint: 'High fever (38.8 C) with throat redness and appetite loss since yesterday.',
-      status: 'scheduled',
-      feePaid: 500,
-      paymentMethod: 'Telebirr',
-      bookedAt: 'Today, 08:45 AM',
-      checkedInAt: null
-    },
-    {
-      id: 'apt-004',
-      slotTime: '11:00 AM',
-      date: 'Today, Oct 17',
-      patientName: 'Mulugeta Assefa',
-      gender: 'male',
-      age: 64,
-      phoneNumber: '+251 91 300 1122',
-      cardNumber: 'CLN-2026-00088',
-      nationalId: 'ET-FAYDA-55120',
-      doctorId: 'doc-101',
-      doctorName: 'Dr. Abebe Bekele',
-      specialty: 'Internal Medicine & General Practice',
-      chiefComplaint: 'Type 2 Diabetes fasting blood sugar evaluation and foot examination.',
-      status: 'scheduled',
-      feePaid: 500,
-      paymentMethod: 'Cash',
-      bookedAt: 'Today, 09:00 AM',
-      checkedInAt: null
-    },
-    {
-      id: 'apt-005',
-      slotTime: '08:00 AM',
-      date: 'Today, Oct 17',
-      patientName: 'Tigist Kebede',
-      gender: 'female',
-      age: 34,
-      phoneNumber: '+251 93 555 4433',
-      cardNumber: 'CLN-2026-00012',
-      nationalId: 'ET-FAYDA-77192',
-      doctorId: 'doc-102',
-      doctorName: 'Dr. Bethlehem Haile',
-      specialty: 'Pediatrics & Child Health',
-      chiefComplaint: 'Post-treatment follow-up and vaccination administration.',
-      status: 'completed',
-      feePaid: 450,
-      paymentMethod: 'CBE Birr',
-      bookedAt: 'Yesterday, 04:30 PM',
-      checkedInAt: '07:50 AM'
-    }
-  ]);
+  // Today's queue (real appointments only)
+  const [queue, setQueue] = useState([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
+  const [queueError, setQueueError] = useState('');
 
-  // Available Time Slots for Walk-in Booking
-  const [availableSlots, setAvailableSlots] = useState([
-    { id: 'slot-101', time: '11:30 AM', doctorId: 'doc-101', doctorName: 'Dr. Abebe Bekele', specialty: 'Internal Medicine', room: 'Suite 201' },
-    { id: 'slot-102', time: '02:00 PM', doctorId: 'doc-101', doctorName: 'Dr. Abebe Bekele', specialty: 'Internal Medicine', room: 'Suite 201' },
-    { id: 'slot-103', time: '02:45 PM', doctorId: 'doc-101', doctorName: 'Dr. Abebe Bekele', specialty: 'Internal Medicine', room: 'Suite 201' },
-    { id: 'slot-104', time: '03:30 PM', doctorId: 'doc-101', doctorName: 'Dr. Abebe Bekele', specialty: 'Internal Medicine', room: 'Suite 201' },
-    { id: 'slot-201', time: '11:45 AM', doctorId: 'doc-102', doctorName: 'Dr. Bethlehem Haile', specialty: 'Pediatrics', room: 'Suite 204' },
-    { id: 'slot-202', time: '01:30 PM', doctorId: 'doc-102', doctorName: 'Dr. Bethlehem Haile', specialty: 'Pediatrics', room: 'Suite 204' },
-    { id: 'slot-203', time: '03:15 PM', doctorId: 'doc-102', doctorName: 'Dr. Bethlehem Haile', specialty: 'Pediatrics', room: 'Suite 204' }
-  ]);
+  // Arrival check-ins are tracked on this screen only (the backend has no check-in step)
+  const [checkIns, setCheckIns] = useState({});
+
+  // Today's open slots (real slots only)
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [slotsError, setSlotsError] = useState('');
+
+  // Error banner (separate from the success notification)
+  const [errorNotification, setErrorNotification] = useState('');
+  const [cancelError, setCancelError] = useState('');
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   // Auth Guard: Only Receptionist and Admin roles
-  useEffect(() => {
-    if (mounted && user) {
-      if (user.role === 'patient') {
-        router.push('/dashboard');
-      } else if (user.role === 'doctor') {
-        router.push('/doctor/dashboard');
-      }
-    } else if (mounted && !user) {
-      router.push('/login');
-    }
-  }, [mounted, user, router]);
+  const { allowed } = useRequireRole(['receptionist', 'admin']);
 
-  // Fetch Clinic Status & Doctor Roster
+  const errorMessage = (err, fallback) => err?.response?.data?.message || fallback;
+
+  const showNotice = (text) => {
+    setErrorNotification('');
+    setNotification(text);
+    setTimeout(() => setNotification(''), 5000);
+  };
+
+  const showError = (text) => {
+    setNotification('');
+    setErrorNotification(text);
+    setTimeout(() => setErrorNotification(''), 7000);
+  };
+
+  // Fetch Clinic Status (no invented "open" status on failure)
   const fetchClinicOverview = async () => {
     setLoadingStatus(true);
     try {
       const res = await clinicApi.get('/status');
       if (res.data?.success) {
-        setClinicStatus(res.data.data);
+        setClinicStatus({ isOpen: Boolean(res.data.isOpen), message: res.data.message || '' });
+      } else {
+        setClinicStatus(null);
       }
     } catch (e) {
-      console.warn('Clinic status fetch fallback');
-      setClinicStatus({
-        isOpen: true,
-        message: 'Open Now • Regular Hours (Addis Ababa)',
-        operatingHours: { open: '08:30', close: '17:30' }
-      });
+      setClinicStatus(null);
     } finally {
       setLoadingStatus(false);
     }
   };
 
-  // Live Queue Fetcher
+  // Live Queue Fetcher: today's appointments (Addis Ababa date)
   const fetchLiveQueue = async (currentDoctors = doctors) => {
+    setLoadingQueue(true);
+    setQueueError('');
     try {
-      const res = await appointmentApi.get('/appointments');
-      if (res.data?.success && Array.isArray(res.data.data)) {
-        const docList = currentDoctors && currentDoctors.length > 0 ? currentDoctors : doctors;
-        const mapped = res.data.data.map(apt => {
-          const matchedDoc = docList.find(d => d.id === apt.doctorId);
-          const timeStr = (apt.startTime && apt.endTime)
-            ? `${apt.startTime} - ${apt.endTime}`
-            : (apt.startTime || 'Scheduled');
-          return {
-            id: apt._id || apt.id,
-            slotId: apt.slotId,
-            slotTime: timeStr,
-            date: apt.date || 'Today',
-            patientName: apt.patientName || 'Registered Patient',
-            gender: apt.gender || 'female',
-            age: apt.age || 28,
-            phoneNumber: apt.phoneNumber || '+251 91 000 0000',
-            cardNumber: apt.cardNumber || 'CLN-CARD',
-            nationalId: apt.nationalId || 'ET-FAYDA',
-            doctorId: apt.doctorId,
-            doctorName: matchedDoc?.name || apt.doctorName || `Physician (${(apt.doctorId || '').slice(-4)})`,
-            specialty: matchedDoc?.specialty || apt.specialty || 'General Practice',
-            chiefComplaint: apt.reasonForVisit || apt.chiefComplaint || 'Consultation request.',
-            status: apt.status || 'scheduled',
-            feePaid: apt.feePaid || 500,
-            paymentMethod: apt.paymentMethod || 'Telebirr',
-            bookedAt: apt.createdAt ? new Date(apt.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Earlier',
-            checkedInAt: apt.checkedInAt || null,
-            queueNumber: apt.queueNumber || 1,
-            doctorNotes: apt.doctorNotes,
-            prescription: apt.prescription,
-            cancelReason: apt.cancelReason
-          };
-        });
-        if (mapped.length > 0) {
-          setQueue(mapped);
-        }
-      }
+      const res = await appointmentApi.get('/appointments', { params: { date: clinicToday() } });
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      const docList = currentDoctors && currentDoctors.length > 0 ? currentDoctors : doctors;
+      const mapped = list.map(apt => {
+        const matchedDoc = docList.find(d => d.id === apt.doctorId);
+        return {
+          id: apt._id,
+          patientId: apt.patientId,
+          slotId: apt.slotId,
+          startTime: apt.startTime || '',
+          slotTime: apt.startTime ? formatClinicRange(apt.startTime, apt.endTime) : '—',
+          date: apt.date,
+          patientName: apt.patientName || 'Name not recorded',
+          forPerson: apt.forPerson || '',
+          cardNumber: apt.cardNumber || '',
+          doctorId: apt.doctorId,
+          doctorName: matchedDoc?.name || `Doctor …${String(apt.doctorId || '').slice(-4)}`,
+          specialty: matchedDoc?.specialty || '',
+          reasonForVisit: apt.reasonForVisit || '',
+          status: apt.status,
+          queueNumber: apt.queueNumber ?? null,
+          cancelReason: apt.cancelReason || ''
+        };
+      });
+      mapped.sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0));
+      setQueue(mapped);
     } catch (err) {
-      console.warn('Appointments queue fetch fallback:', err.message);
+      setQueueError(errorMessage(err, 'Could not load today\'s appointments. Please refresh.'));
+    } finally {
+      setLoadingQueue(false);
+    }
+  };
+
+  // Today's available slots for the given (active) doctors
+  const fetchSlots = async (docList = doctors) => {
+    setSlotsError('');
+    const today = clinicToday();
+    const activeDocs = docList.filter(d => d.active);
+    const results = await Promise.allSettled(
+      activeDocs.map(doc => clinicApi.get(`/${doc.id}/slots`, { params: { date: today } }))
+    );
+    const liveSlots = [];
+    let failures = 0;
+    results.forEach((result, idx) => {
+      if (result.status !== 'fulfilled') {
+        failures += 1;
+        return;
+      }
+      const slots = Array.isArray(result.value?.data?.data) ? result.value.data.data : [];
+      const doc = activeDocs[idx];
+      slots.filter(s => s.status === 'available').forEach(s => {
+        liveSlots.push({
+          id: s._id,
+          time: formatClinicRange(s.startTime, s.endTime),
+          startTime: s.startTime,
+          endTime: s.endTime,
+          doctorId: doc.id,
+          doctorName: doc.name,
+          specialty: doc.specialty
+        });
+      });
+    });
+    liveSlots.sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0));
+    setAvailableSlots(liveSlots);
+    if (failures > 0) {
+      setSlotsError(`Could not load slots for ${failures} doctor(s). The list below may be incomplete.`);
     }
   };
 
   const fetchDoctorRoster = async () => {
     setLoadingDoctors(true);
+    setRosterError('');
     try {
       const res = await clinicApi.get('/getAllDoctors?all=true');
-      if (res.data?.success && Array.isArray(res.data.data)) {
-        const mapped = res.data.data.map((doc, idx) => {
-          const account = doc.accountDetails && typeof doc.accountDetails === 'object' ? doc.accountDetails : {};
-          const rawName = account.fullName || doc.name || `Staff Physician ${idx + 1}`;
-          const formattedName = rawName.startsWith('Dr.') ? rawName : `Dr. ${rawName}`;
-          return {
-            id: doc._id || doc.id || `doc-${idx + 1}`,
-            name: formattedName,
-            specialty: doc.specialization || 'General Practice',
-            phone: account.phoneNumber || doc.phone || '+251 91 000 0000',
-            room: doc.room || `Suite 20${(idx % 5) + 1}`,
-            shift: (doc.startTime && doc.endTime) ? `${doc.startTime} - ${doc.endTime}` : '08:30 - 17:30',
-            active: doc.isActive ?? true
-          };
-        });
-        setDoctors(mapped);
-        if (mapped.length > 0 && !selectedDoctorForSlots) {
-          setSelectedDoctorForSlots(mapped[0].id);
-        }
-
-        // Fetch live queue with the mapped doctors
-        fetchLiveQueue(mapped);
-
-        // Fetch live available slots for today across all doctors
-        const todayIso = new Date().toISOString().split('T')[0];
-        try {
-          const slotResults = await Promise.allSettled(
-            mapped.map(doc => clinicApi.get(`/${doc.id}/slots?date=${todayIso}`))
-          );
-          const liveSlots = [];
-          slotResults.forEach((result, idx) => {
-            if (result.status === 'fulfilled') {
-              const slots = result.value?.data?.data || result.value?.data?.slots || [];
-              const doc = mapped[idx];
-              if (Array.isArray(slots)) {
-                slots.filter(s => s.status === 'available').forEach(s => {
-                  liveSlots.push({
-                    id: s._id || s.id,
-                    time: `${s.startTime} - ${s.endTime}`,
-                    startTime: s.startTime,
-                    endTime: s.endTime,
-                    doctorId: doc.id,
-                    doctorName: doc.name,
-                    specialty: doc.specialty,
-                    room: doc.room
-                  });
-                });
-              }
-            }
-          });
-          if (liveSlots.length > 0) {
-            setAvailableSlots(liveSlots);
-          }
-        } catch (sErr) {
-          console.warn('Slots fetch fallback:', sErr.message);
-        }
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      const mapped = list.map((doc) => {
+        const account = doc.accountDetails && typeof doc.accountDetails === 'object' ? doc.accountDetails : {};
+        const rawName = account.fullName || account.name || doc.name || 'Unnamed doctor';
+        return {
+          id: doc._id || doc.id,
+          name: rawName.startsWith('Dr.') ? rawName : `Dr. ${rawName}`,
+          specialty: doc.specialization || '',
+          phone: account.phoneNumber || '',
+          shift: doc.startTime ? formatClinicRange(doc.startTime, doc.endTime) : '',
+          active: doc.isActive !== false
+        };
+      });
+      setDoctors(mapped);
+      if (mapped.length > 0 && !selectedDoctorForSlots) {
+        setSelectedDoctorForSlots(mapped[0].id);
       }
+      fetchLiveQueue(mapped);
+      await fetchSlots(mapped);
     } catch (e) {
-      console.warn('Doctors roster fallback');
-      const fallbackDocs = [
-        { id: 'doc-101', name: 'Dr. Abebe Bekele', specialty: 'Internal Medicine & General Practice', room: 'Suite 201', shift: '08:30 - 16:30', phone: '+251 91 123 4567', active: true },
-        { id: 'doc-102', name: 'Dr. Bethlehem Haile', specialty: 'Pediatrics & Child Health', room: 'Suite 204', shift: '08:30 - 17:00', phone: '+251 91 234 5678', active: true }
-      ];
-      setDoctors(fallbackDocs);
-      setSelectedDoctorForSlots('doc-101');
-      fetchLiveQueue(fallbackDocs);
+      setRosterError(errorMessage(e, 'Could not load the doctor roster. Please refresh.'));
+      setDoctors([]);
+      setAvailableSlots([]);
+      fetchLiveQueue([]);
     } finally {
       setLoadingDoctors(false);
     }
   };
 
   useEffect(() => {
-    if (mounted) {
+    if (allowed) {
       fetchClinicOverview();
       fetchDoctorRoster();
-      fetchLiveQueue();
     }
-  }, [mounted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed]);
 
-  // Mark Patient as Checked In
+  // Mark patient as arrived (front-desk screen only; not saved to the backend)
   const handleCheckInPatient = (aptId) => {
-    setQueue(prev => prev.map(item => {
-      if (item.id === aptId) {
-        const nowStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        return { ...item, status: 'checked_in', checkedInAt: nowStr };
-      }
-      return item;
-    }));
-    setNotification('✅ Patient marked as arrived & checked in! Doctor queue notified.');
-    setTimeout(() => setNotification(''), 4000);
+    const nowStr = formatClinicTime(clinicNowHHMM());
+    setCheckIns(prev => ({ ...prev, [aptId]: nowStr }));
+    showNotice('✅ Patient marked as arrived (shown on this front-desk screen only).');
   };
 
-  // Submit Cancellation (Live API call releases slot in clinic-service)
+  // Submit Cancellation: only show "cancelled" after the backend confirms it
   const handleCancelAppointment = async () => {
     if (!showCancelModal) return;
+    setCancelSubmitting(true);
+    setCancelError('');
     try {
       await appointmentApi.patch(`/appointments/${showCancelModal.id}/cancel`, {
-        cancelReason: cancelReason || 'Front desk cancelled on patient request'
+        cancelReason: cancelReason.trim() || 'Front desk cancelled on patient request'
       });
-      setQueue(prev => prev.map(item => {
-        if (item.id === showCancelModal.id) {
-          return { ...item, status: 'cancelled', cancelReason: cancelReason || 'Cancelled by Front Desk' };
-        }
-        return item;
-      }));
-      setNotification('⚠️ Appointment cancelled and slot released back to inventory.');
-    } catch (err) {
-      console.warn('Cancellation API call fallback:', err.message);
-      setQueue(prev => prev.map(item => {
-        if (item.id === showCancelModal.id) {
-          return { ...item, status: 'cancelled', cancelReason: cancelReason || 'Cancelled by Front Desk' };
-        }
-        return item;
-      }));
-      setNotification('⚠️ Appointment marked as cancelled.');
-    } finally {
+      const name = showCancelModal.patientName;
       setShowCancelModal(null);
       setCancelReason('');
-      setTimeout(() => setNotification(''), 4000);
+      showNotice(`Appointment for ${name} cancelled and the slot released.`);
+      fetchLiveQueue();
+      fetchSlots();
+    } catch (err) {
+      setCancelError(errorMessage(err, 'Could not cancel the appointment. Nothing was changed.'));
+    } finally {
+      setCancelSubmitting(false);
     }
   };
 
-  // Walk-in Slot Booking Submit (Live API call allocates appointment and locks slot)
+  const closeCancelModal = () => {
+    setShowCancelModal(null);
+    setCancelReason('');
+    setCancelError('');
+  };
+
+  // ── Walk-in flow ────────────────────────────────────────────────
+  const openWalkinModal = (slot) => {
+    setSelectedSlotForBooking(slot);
+    setWalkinStep('find');
+    setPatientSearch('');
+    setPatientResults([]);
+    setPatientSearchDone(false);
+    setSelectedPatient(null);
+    setNewPatient(emptyNewPatient);
+    setExistingMatch(null);
+    setWalkinReason('');
+    setWalkinError('');
+    setShowWalkinModal(true);
+  };
+
+  const closeWalkinModal = () => {
+    setShowWalkinModal(false);
+    setSelectedSlotForBooking(null);
+  };
+
+  const handlePatientSearch = async (e) => {
+    if (e) e.preventDefault();
+    const term = patientSearch.trim();
+    setWalkinError('');
+    if (term.length < 2) {
+      setWalkinError('Type at least 2 characters (name, phone or email) to search.');
+      return;
+    }
+    setSearchingPatients(true);
+    try {
+      const res = await API.get('/users/staff/patients', { params: { search: term } });
+      setPatientResults(Array.isArray(res.data?.data) ? res.data.data : []);
+      setPatientSearchDone(true);
+    } catch (err) {
+      setWalkinError(errorMessage(err, 'Patient search failed. Please try again.'));
+    } finally {
+      setSearchingPatients(false);
+    }
+  };
+
+  const handleRegisterPatient = async (e) => {
+    e.preventDefault();
+    setWalkinError('');
+    setExistingMatch(null);
+    const payload = {
+      name: newPatient.name.trim(),
+      phoneNumber: newPatient.phoneNumber.trim(),
+      gender: newPatient.gender,
+      ...(newPatient.email.trim() ? { email: newPatient.email.trim() } : {}),
+      ...(newPatient.address.trim() ? { address: newPatient.address.trim() } : {})
+    };
+    setWalkinSubmitting(true);
+    try {
+      const res = await API.post('/users/staff/patients', payload);
+      setSelectedPatient(res.data?.data || null);
+      setWalkinStep('find');
+    } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.data) {
+        setExistingMatch(err.response.data.data);
+      }
+      setWalkinError(errorMessage(err, 'Could not register the patient. Please check the details.'));
+    } finally {
+      setWalkinSubmitting(false);
+    }
+  };
+
+  // Book the walk-in: real appointment only. Nothing is added locally on failure.
   const handleWalkinBookingSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedSlotForBooking) return;
-
-    const todayIso = new Date().toISOString().split('T')[0];
-    const payload = {
-      doctorId: selectedSlotForBooking.doctorId,
-      slotId: selectedSlotForBooking.id,
-      date: todayIso,
-      patientName: walkinForm.patientName.trim(),
-      forPerson: 'Self',
-      reasonForVisit: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.'
-    };
-
+    if (!selectedSlotForBooking || !selectedPatient) return;
+    setWalkinError('');
+    setWalkinSubmitting(true);
     try {
-      const res = await appointmentApi.post('/appointments', payload);
-      const created = res.data?.data || {};
-
-      const newApt = {
-        id: created._id || `apt-${Date.now().toString().slice(-4)}`,
-        slotId: selectedSlotForBooking.id,
-        slotTime: selectedSlotForBooking.time,
-        date: 'Today',
-        patientName: walkinForm.patientName.trim(),
-        gender: walkinForm.gender,
-        age: parseInt(walkinForm.age, 10) || 30,
-        phoneNumber: walkinForm.phoneNumber.trim(),
-        cardNumber: created.cardNumber || `CLN-2026-${Math.floor(10000 + Math.random() * 90000)}`,
-        nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 90000)}`,
+      const res = await appointmentApi.post('/appointments', {
+        patientId: selectedPatient._id,
         doctorId: selectedSlotForBooking.doctorId,
-        doctorName: selectedSlotForBooking.doctorName,
-        specialty: selectedSlotForBooking.specialty,
-        chiefComplaint: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.',
-        status: 'checked_in', // walk-ins are physically present at front desk
-        feePaid: walkinForm.feeAmount,
-        paymentMethod: walkinForm.paymentMethod,
-        bookedAt: 'Just Now (Walk-in Desk)',
-        checkedInAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        queueNumber: created.queueNumber || 1
-      };
-
-      setQueue(prev => [newApt, ...prev]);
-      setAvailableSlots(prev => prev.filter(s => s.id !== selectedSlotForBooking.id));
-
-      setShowWalkinModal(false);
-      setSelectedSlotForBooking(null);
-      setWalkinForm({
-        patientName: '',
-        phoneNumber: '+251 9',
-        gender: 'female',
-        age: '28',
-        chiefComplaint: '',
-        paymentMethod: 'Cash',
-        feeAmount: 500
+        slotId: selectedSlotForBooking.id,
+        date: clinicToday(),
+        reasonForVisit: walkinReason.trim() || 'Walk-in consultation'
       });
-
-      setNotification(`🎉 Walk-in patient ${newApt.patientName} booked with ${newApt.doctorName} (Queue #${created.queueNumber || 1})!`);
-      setTimeout(() => setNotification(''), 5000);
+      const created = res.data?.data || {};
+      closeWalkinModal();
+      showNotice(
+        `🎉 ${selectedPatient.name} booked with ${selectedSlotForBooking.doctorName} at ${formatClinicTime(created.startTime || selectedSlotForBooking.startTime)}` +
+        (created.queueNumber ? ` (Queue #${created.queueNumber})` : '') +
+        (created.cardNumber ? ` — card ${created.cardNumber}` : '') + '.'
+      );
+      fetchLiveQueue();
+      fetchSlots();
     } catch (err) {
-      console.error('Walk-in booking error:', err);
-      // Fallback local addition if offline
-      const newApt = {
-        id: `apt-${Date.now().toString().slice(-4)}`,
-        slotId: selectedSlotForBooking.id,
-        slotTime: selectedSlotForBooking.time,
-        date: 'Today',
-        patientName: walkinForm.patientName.trim(),
-        gender: walkinForm.gender,
-        age: parseInt(walkinForm.age, 10) || 30,
-        phoneNumber: walkinForm.phoneNumber.trim(),
-        cardNumber: `CLN-2026-${Math.floor(10000 + Math.random() * 90000)}`,
-        nationalId: `ET-FAYDA-${Math.floor(10000 + Math.random() * 90000)}`,
-        doctorId: selectedSlotForBooking.doctorId,
-        doctorName: selectedSlotForBooking.doctorName,
-        specialty: selectedSlotForBooking.specialty,
-        chiefComplaint: walkinForm.chiefComplaint.trim() || 'Walk-in clinical consultation request.',
-        status: 'checked_in',
-        feePaid: walkinForm.feeAmount,
-        paymentMethod: walkinForm.paymentMethod,
-        bookedAt: 'Just Now (Walk-in Desk)',
-        checkedInAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-      };
-      setQueue(prev => [newApt, ...prev]);
-      setAvailableSlots(prev => prev.filter(s => s.id !== selectedSlotForBooking.id));
-      setShowWalkinModal(false);
-      setSelectedSlotForBooking(null);
-      setNotification(`⚠️ Saved walk-in locally: ${newApt.patientName} (${err.response?.data?.message || err.message})`);
-      setTimeout(() => setNotification(''), 5000);
+      setWalkinError(errorMessage(err, 'Booking failed. Nothing was saved.'));
+      if (err.response?.status === 409) {
+        fetchSlots(); // the slot was probably just taken: refresh the list
+      }
+    } finally {
+      setWalkinSubmitting(false);
     }
   };
 
+  // Registry lookup (real patient records)
+  const handleRegistrySearch = async (e) => {
+    e.preventDefault();
+    const term = registrySearch.trim();
+    setRegistryError('');
+    if (term.length < 2) {
+      setRegistryError('Type at least 2 characters (name, phone or email) to search.');
+      return;
+    }
+    setRegistryLoading(true);
+    try {
+      const res = await API.get('/users/staff/patients', { params: { search: term } });
+      setRegistryResults(Array.isArray(res.data?.data) ? res.data.data : []);
+      setRegistrySearched(true);
+    } catch (err) {
+      setRegistryError(errorMessage(err, 'Patient search failed. Please try again.'));
+    } finally {
+      setRegistryLoading(false);
+    }
+  };
+
+  // Queue as displayed: real status, plus local arrival marks on scheduled visits
+  const displayQueue = queue.map(item => (
+    item.status === 'scheduled' && checkIns[item.id]
+      ? { ...item, status: 'checked_in', checkedInAt: checkIns[item.id] }
+      : item
+  ));
 
   // Filter queue
-  const filteredQueue = queue.filter(item => {
-    const matchesQuery = !searchQuery ||
-      item.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.phoneNumber.includes(searchQuery) ||
-      item.cardNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.doctorName.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredQueue = displayQueue.filter(item => {
+    const q = searchQuery.trim().toLowerCase();
+    const matchesQuery = !q ||
+      item.patientName.toLowerCase().includes(q) ||
+      item.cardNumber.toLowerCase().includes(q) ||
+      item.doctorName.toLowerCase().includes(q) ||
+      item.forPerson.toLowerCase().includes(q);
 
     const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
     const matchesDoctor = selectedDoctorFilter === 'all' || item.doctorId === selectedDoctorFilter;
@@ -557,7 +487,7 @@ function ReceptionDashboardContent() {
     return matchesQuery && matchesStatus && matchesDoctor;
   });
 
-  if (!mounted) {
+  if (!mounted || !allowed) {
     return (
       <div style={{ minHeight: '90vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>
@@ -676,18 +606,26 @@ function ReceptionDashboardContent() {
                 Clinic Operating Status
               </div>
               <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ffffff', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#34d399', display: 'inline-block' }} />
-                Open (Addis Ababa)
+                <span style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: clinicStatus ? (clinicStatus.isOpen ? '#34d399' : '#f87171') : '#cbd5e1',
+                  display: 'inline-block'
+                }} />
+                {loadingStatus ? 'Checking…' : clinicStatus ? (clinicStatus.isOpen ? 'Open (Addis Ababa)' : 'Closed') : 'Status unavailable'}
               </div>
+              {clinicStatus?.message && (
+                <div style={{ fontSize: '0.72rem', color: '#d1fae5', marginTop: '2px' }}>{clinicStatus.message}</div>
+              )}
             </div>
 
             <button
               onClick={() => {
                 if (availableSlots.length > 0) {
-                  setSelectedSlotForBooking(availableSlots[0]);
-                  setShowWalkinModal(true);
+                  openWalkinModal(availableSlots[0]);
                 } else {
-                  setActiveTab('slots');
+                  handleTabChange('slots');
                 }
               }}
               className="btn btn-primary"
@@ -727,6 +665,23 @@ function ReceptionDashboardContent() {
             <span>{notification}</span>
           </div>
         )}
+        {errorNotification && (
+          <div style={{
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#991b1b',
+            padding: '12px 20px',
+            borderRadius: '12px',
+            marginBottom: '20px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <AlertCircle size={18} />
+            <span>{errorNotification}</span>
+          </div>
+        )}
 
         {/* ── TABS NAVIGATION BAR ─────────────────────────────────────── */}
         <div style={{
@@ -755,7 +710,7 @@ function ReceptionDashboardContent() {
               whiteSpace: 'nowrap'
             }}
           >
-            <Users size={18} /> Today's Patient Queue ({queue.length})
+            <Users size={18} /> Today's Patient Queue ({displayQueue.filter(q => q.status !== 'cancelled').length})
             <span style={{
               background: '#ecfdf5',
               color: '#065f46',
@@ -764,7 +719,7 @@ function ReceptionDashboardContent() {
               fontSize: '0.72rem',
               fontWeight: 800
             }}>
-              {queue.filter(q => q.status === 'checked_in').length} In Waiting Room
+              {displayQueue.filter(q => q.status === 'checked_in').length} Arrived
             </span>
           </button>
 
@@ -828,7 +783,7 @@ function ReceptionDashboardContent() {
                       type="text"
                       className="form-control"
                       style={{ paddingLeft: '36px', height: '42px', borderRadius: '10px' }}
-                      placeholder="Search patient, phone, or card number..."
+                      placeholder="Search patient, card number, or doctor..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -852,8 +807,7 @@ function ReceptionDashboardContent() {
                   {[
                     { id: 'all', label: 'All Patients' },
                     { id: 'scheduled', label: 'Scheduled' },
-                    { id: 'checked_in', label: 'Checked In / Waiting' },
-                    { id: 'in_consultation', label: 'In Consultation' },
+                    { id: 'checked_in', label: 'Arrived' },
                     { id: 'completed', label: 'Treated' },
                     { id: 'cancelled', label: 'Cancelled' }
                   ].map(tab => (
@@ -889,15 +843,32 @@ function ReceptionDashboardContent() {
                       <th style={{ padding: '14px 20px' }}>Patient & Card Number</th>
                       <th style={{ padding: '14px 20px' }}>Assigned Physician</th>
                       <th style={{ padding: '14px 20px' }}>Status</th>
-                      <th style={{ padding: '14px 20px' }}>Fee Status</th>
+                      <th style={{ padding: '14px 20px' }}>Queue #</th>
                       <th style={{ padding: '14px 20px', textAlign: 'right' }}>Front Desk Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredQueue.length === 0 ? (
+                    {loadingQueue && queue.length === 0 ? (
                       <tr>
                         <td colSpan={6} style={{ padding: '50px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          No patients matching your search criteria.
+                          Loading today's appointments…
+                        </td>
+                      </tr>
+                    ) : queueError ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '50px 20px', textAlign: 'center', color: '#991b1b' }}>
+                          <div style={{ fontWeight: 700, marginBottom: '10px' }}>{queueError}</div>
+                          <button onClick={() => fetchLiveQueue()} className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <RefreshCw size={14} /> Try again
+                          </button>
+                        </td>
+                      </tr>
+                    ) : filteredQueue.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '50px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          {queue.length === 0
+                            ? `No appointments booked for today (${clinicToday()}).`
+                            : 'No patients matching your search criteria.'}
                         </td>
                       </tr>
                     ) : (
@@ -918,13 +889,15 @@ function ReceptionDashboardContent() {
                               {item.patientName}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748b', fontSize: '0.78rem', marginTop: '2px' }}>
-                              <span>{item.gender === 'male' ? 'M' : 'F'}, {item.age}y</span>
-                              <span>•</span>
-                              <span style={{ fontFamily: 'monospace' }}>{item.cardNumber}</span>
+                              {item.forPerson && item.forPerson !== 'Self' && <span>{item.forPerson}</span>}
+                              {item.forPerson && item.forPerson !== 'Self' && item.cardNumber && <span>•</span>}
+                              {item.cardNumber && <span style={{ fontFamily: 'monospace' }}>{item.cardNumber}</span>}
                             </div>
-                            <div style={{ fontSize: '0.76rem', color: '#059669', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                              <Phone size={12} /> {item.phoneNumber}
-                            </div>
+                            {item.reasonForVisit && (
+                              <div style={{ fontSize: '0.76rem', color: '#475569', marginTop: '2px' }}>
+                                {item.reasonForVisit}
+                              </div>
+                            )}
                           </td>
 
                           <td style={{ padding: '16px 20px' }}>
@@ -960,21 +933,23 @@ function ReceptionDashboardContent() {
                               {item.status === 'scheduled' && <Clock size={12} />}
                               {item.status === 'completed' && <Check size={12} />}
                               {item.status === 'cancelled' && <Ban size={12} />}
-                              {item.status.replace('_', ' ')}
+                              {item.status === 'checked_in' ? 'arrived' : item.status.replace('_', ' ')}
                             </span>
                             {item.checkedInAt && (
                               <div style={{ fontSize: '0.72rem', color: '#059669', marginTop: '3px' }}>
                                 Arrived at {item.checkedInAt}
                               </div>
                             )}
+                            {item.status === 'cancelled' && item.cancelReason && (
+                              <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: '3px' }}>
+                                {item.cancelReason}
+                              </div>
+                            )}
                           </td>
 
                           <td style={{ padding: '16px 20px' }}>
-                            <div style={{ fontWeight: 800, color: '#15803d' }}>
-                              {item.feePaid} ETB
-                            </div>
-                            <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                              {item.paymentMethod}
+                            <div style={{ fontWeight: 800, color: 'var(--text-main)' }}>
+                              {item.queueNumber ? `#${item.queueNumber}` : '—'}
                             </div>
                           </td>
 
@@ -1015,7 +990,7 @@ function ReceptionDashboardContent() {
 
                               {item.status !== 'completed' && item.status !== 'cancelled' && (
                                 <button
-                                  onClick={() => setShowCancelModal(item)}
+                                  onClick={() => { setCancelError(''); setShowCancelModal(item); }}
                                   className="btn btn-sm"
                                   style={{
                                     background: '#fee2e2',
@@ -1067,6 +1042,24 @@ function ReceptionDashboardContent() {
               </div>
             </div>
 
+            {(rosterError || slotsError) && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '12px 18px', borderRadius: '12px', marginBottom: '18px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={16} /> {rosterError || slotsError}
+              </div>
+            )}
+
+            {!loadingDoctors && !rosterError && doctors.length === 0 && (
+              <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', marginBottom: '28px' }}>
+                No doctors are registered yet.
+              </div>
+            )}
+
+            {loadingDoctors && doctors.length === 0 && (
+              <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', marginBottom: '28px' }}>
+                Loading doctor roster and today's slots…
+              </div>
+            )}
+
             {/* Doctors Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
               {doctors.map(doc => {
@@ -1098,28 +1091,29 @@ function ReceptionDashboardContent() {
                       </div>
 
                       <span style={{
-                        background: '#ecfdf5',
-                        color: '#065f46',
-                        border: '1px solid #a7f3d0',
+                        background: doc.active ? '#ecfdf5' : '#f1f5f9',
+                        color: doc.active ? '#065f46' : '#64748b',
+                        border: `1px solid ${doc.active ? '#a7f3d0' : '#e2e8f0'}`,
                         padding: '3px 9px',
                         borderRadius: '9999px',
                         fontSize: '0.72rem',
                         fontWeight: 700
                       }}>
-                        {docSlots.length} Open Slots
+                        {doc.active ? `${docSlots.length} Open Slots` : 'Inactive'}
                       </span>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Clock size={13} /> Shift: {doc.shift}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <MapPin size={13} /> Consultation Room: {doc.room}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Phone size={13} /> Physician Contact: {doc.phone}
-                      </div>
+                      {doc.shift && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Clock size={13} /> Shift: {doc.shift}
+                        </div>
+                      )}
+                      {doc.phone && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Phone size={13} /> Physician Contact: {doc.phone}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '14px' }}>
@@ -1129,17 +1123,14 @@ function ReceptionDashboardContent() {
 
                       {docSlots.length === 0 ? (
                         <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic', padding: '8px 0' }}>
-                          Fully booked for today.
+                          {doc.active ? 'No open slots left today.' : 'This doctor is not taking appointments.'}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                           {docSlots.map(slot => (
                             <button
                               key={slot.id}
-                              onClick={() => {
-                                setSelectedSlotForBooking(slot);
-                                setShowWalkinModal(true);
-                              }}
+                              onClick={() => openWalkinModal(slot)}
                               style={{
                                 padding: '6px 12px',
                                 background: '#f0fdf4',
@@ -1177,51 +1168,92 @@ function ReceptionDashboardContent() {
               <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: '0 0 6px', color: 'var(--text-main)' }}>
                 Patient Medical Cards & Registry Lookup (የታካሚዎች መረጃ ፍለጋ)
               </h2>
-              <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-muted)' }}>
-                Look up registered patients by Ethiopian phone number, medical card ID, or name.
+              <p style={{ margin: '0 0 14px', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                Search registered patients by name, phone number or email.
               </p>
+              <form onSubmit={handleRegistrySearch} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative', flex: '1 1 280px', maxWidth: '420px' }}>
+                  <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                  <input
+                    type="text"
+                    className="form-control"
+                    style={{ paddingLeft: '36px', height: '42px', borderRadius: '10px' }}
+                    placeholder="e.g. Almaz, 0911223344"
+                    value={registrySearch}
+                    onChange={(e) => setRegistrySearch(e.target.value)}
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={registryLoading} style={{ background: '#059669', border: 'none' }}>
+                  {registryLoading ? 'Searching…' : 'Search'}
+                </button>
+              </form>
+              {registryError && (
+                <div style={{ color: '#991b1b', fontSize: '0.84rem', fontWeight: 600, marginTop: '10px' }}>{registryError}</div>
+              )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '18px' }}>
-              {queue.map(p => (
-                <div key={p.id} className="glass-panel" style={{ padding: '20px', borderRadius: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                    <div>
+            {registrySearched && (
+              <div style={{ marginBottom: '28px' }}>
+                {registryResults.length === 0 ? (
+                  <div className="glass-panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    No registered patients match “{registrySearch.trim()}”.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {registryResults.map(p => (
+                      <div key={p._id} className="glass-panel" style={{ padding: '18px', borderRadius: '14px' }}>
+                        <h4 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 800, color: 'var(--text-main)' }}>{p.name}</h4>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.84rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                          <div style={{ color: '#059669', fontWeight: 600 }}>Phone: {p.phoneNumber}</div>
+                          {p.email && <div>Email: {p.email}</div>}
+                          {p.gender && <div style={{ textTransform: 'capitalize' }}>Gender: {p.gender}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 12px', color: 'var(--text-main)' }}>
+              Today's patients ({clinicToday()})
+            </h3>
+            {displayQueue.length === 0 ? (
+              <div className="glass-panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                {loadingQueue ? 'Loading today\'s appointments…' : queueError || 'No appointments booked for today.'}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '18px' }}>
+                {displayQueue.map(p => (
+                  <div key={p.id} className="glass-panel" style={{ padding: '20px', borderRadius: '14px' }}>
+                    <div style={{ marginBottom: '12px' }}>
                       <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)' }}>
                         {p.patientName}
                       </h4>
-                      <span style={{ fontSize: '0.74rem', color: '#64748b', fontFamily: 'monospace' }}>
-                        {p.cardNumber}
-                      </span>
+                      {p.cardNumber && (
+                        <span style={{ fontSize: '0.74rem', color: '#64748b', fontFamily: 'monospace' }}>
+                          {p.cardNumber}
+                        </span>
+                      )}
                     </div>
-                    <span style={{
-                      background: '#f1f5f9',
-                      padding: '3px 8px',
-                      borderRadius: '6px',
-                      fontSize: '0.74rem',
-                      fontWeight: 700,
-                      color: '#475569'
-                    }}>
-                      Fayda: {p.nationalId}
-                    </span>
-                  </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                    <div>Gender: {p.gender === 'male' ? 'Male' : 'Female'} • Age: {p.age} Years</div>
-                    <div style={{ color: '#059669', fontWeight: 600 }}>Phone: {p.phoneNumber}</div>
-                    <div>Assigned Physician: {p.doctorName}</div>
-                  </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
+                      {p.forPerson && p.forPerson !== 'Self' && <div>For: {p.forPerson}</div>}
+                      <div>Assigned Physician: {p.doctorName}</div>
+                      <div>Time: {p.slotTime}</div>
+                    </div>
 
-                  <button
-                    onClick={() => setShowPatientDetailModal(p)}
-                    className="btn btn-secondary btn-sm"
-                    style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                  >
-                    <Eye size={14} /> View Full Patient File
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <button
+                      onClick={() => setShowPatientDetailModal(p)}
+                      className="btn btn-secondary btn-sm"
+                      style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    >
+                      <Eye size={14} /> View Appointment Details
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1242,7 +1274,7 @@ function ReceptionDashboardContent() {
           justifyContent: 'center',
           padding: '20px'
         }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '30px', background: 'white', borderRadius: '20px' }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', maxHeight: '92vh', overflowY: 'auto', padding: '30px', background: 'white', borderRadius: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1253,133 +1285,228 @@ function ReceptionDashboardContent() {
                     Book Walk-in Patient
                   </h3>
                   <span style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 600 }}>
-                    {selectedSlotForBooking.doctorName} • {selectedSlotForBooking.time}
+                    {selectedSlotForBooking.doctorName} • {selectedSlotForBooking.time} • {clinicToday()}
                   </span>
                 </div>
               </div>
               <button
-                onClick={() => setShowWalkinModal(false)}
+                onClick={closeWalkinModal}
                 style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
               >
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleWalkinBookingSubmit}>
-              <div className="form-group" style={{ marginBottom: '14px' }}>
-                <label className="form-label">Patient Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  className="form-control"
-                  placeholder="e.g. Dawit Abebe"
-                  value={walkinForm.patientName}
-                  onChange={(e) => setWalkinForm({ ...walkinForm, patientName: e.target.value })}
-                />
+            {walkinError && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '0.84rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={16} /> {walkinError}
               </div>
+            )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Phone Number *</label>
+            {selectedPatient ? (
+              /* ── Step 2: book the selected patient ─────────────────── */
+              <form onSubmit={handleWalkinBookingSubmit}>
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '12px 14px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                  <div>
+                    <div style={{ fontWeight: 800, color: 'var(--text-main)' }}>{selectedPatient.name}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#475569' }}>
+                      {selectedPatient.phoneNumber}{selectedPatient.email ? ` • ${selectedPatient.email}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedPatient(null); setWalkinError(''); }}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Change
+                  </button>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '14px' }}>
+                  <label className="form-label">Chief Complaint / Reason for Visit *</label>
+                  <textarea
+                    rows={2}
+                    required
+                    className="form-control"
+                    placeholder="Brief reason for consultation..."
+                    value={walkinReason}
+                    onChange={(e) => setWalkinReason(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ fontSize: '0.8rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 12px', marginBottom: '20px' }}>
+                  Collect the consultation fee at the desk. Payments are not recorded in this system.
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button type="button" onClick={closeWalkinModal} className="btn btn-secondary" style={{ flex: 1 }}>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={walkinSubmitting}
+                    className="btn btn-primary"
+                    style={{ flex: 2, background: '#059669', border: 'none', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    <CheckCircle2 size={16} /> {walkinSubmitting ? 'Booking…' : 'Confirm Booking'}
+                  </button>
+                </div>
+              </form>
+            ) : walkinStep === 'register' ? (
+              /* ── Step 1b: register a new walk-in patient ───────────── */
+              <form onSubmit={handleRegisterPatient}>
+                {existingMatch && (
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '10px 12px', marginBottom: '14px', fontSize: '0.84rem' }}>
+                    <div style={{ fontWeight: 700, marginBottom: '6px' }}>
+                      Existing record: {existingMatch.name} ({existingMatch.phoneNumber})
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => { setSelectedPatient(existingMatch); setExistingMatch(null); setWalkinError(''); setWalkinStep('find'); }}
+                    >
+                      Use this patient
+                    </button>
+                  </div>
+                )}
+
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Patient Full Name *</label>
                   <input
                     type="text"
                     required
+                    minLength={2}
                     className="form-control"
-                    placeholder="+251 91 123 4567"
-                    value={walkinForm.phoneNumber}
-                    onChange={(e) => setWalkinForm({ ...walkinForm, phoneNumber: e.target.value })}
+                    placeholder="e.g. Dawit Abebe"
+                    value={newPatient.name}
+                    onChange={(e) => setNewPatient({ ...newPatient, name: e.target.value })}
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Gender & Age</label>
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Phone Number *</label>
+                    <input
+                      type="tel"
+                      required
+                      minLength={9}
+                      className="form-control"
+                      placeholder="0911234567"
+                      value={newPatient.phoneNumber}
+                      onChange={(e) => setNewPatient({ ...newPatient, phoneNumber: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Gender *</label>
                     <select
                       className="form-control"
-                      value={walkinForm.gender}
-                      onChange={(e) => setWalkinForm({ ...walkinForm, gender: e.target.value })}
-                      style={{ width: '60%' }}
+                      value={newPatient.gender}
+                      onChange={(e) => setNewPatient({ ...newPatient, gender: e.target.value })}
                     >
                       <option value="female">Female</option>
                       <option value="male">Male</option>
+                      <option value="other">Other</option>
                     </select>
-                    <input
-                      type="number"
-                      className="form-control"
-                      placeholder="Age"
-                      value={walkinForm.age}
-                      onChange={(e) => setWalkinForm({ ...walkinForm, age: e.target.value })}
-                      style={{ width: '40%' }}
-                    />
                   </div>
                 </div>
-              </div>
 
-              <div className="form-group" style={{ marginBottom: '14px' }}>
-                <label className="form-label">Chief Complaint / Symptoms *</label>
-                <textarea
-                  rows={2}
-                  required
-                  className="form-control"
-                  placeholder="Brief reason for consultation..."
-                  value={walkinForm.chiefComplaint}
-                  onChange={(e) => setWalkinForm({ ...walkinForm, chiefComplaint: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '22px' }}>
-                <div className="form-group">
-                  <label className="form-label">Payment Method</label>
-                  <select
-                    className="form-control"
-                    value={walkinForm.paymentMethod}
-                    onChange={(e) => setWalkinForm({ ...walkinForm, paymentMethod: e.target.value })}
-                  >
-                    <option value="Cash">Cash (በጥሬ ገንዘብ)</option>
-                    <option value="Telebirr">Telebirr (ቴሌብር)</option>
-                    <option value="CBE Birr">CBE Birr (ሲቢኢ ብር)</option>
-                    <option value="Insurance">Insurance / Free</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Fee (ETB)</label>
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Email (optional)</label>
                   <input
-                    type="number"
+                    type="email"
                     className="form-control"
-                    value={walkinForm.feeAmount}
-                    onChange={(e) => setWalkinForm({ ...walkinForm, feeAmount: parseInt(e.target.value, 10) || 500 })}
+                    placeholder="Leave empty if the patient has none"
+                    value={newPatient.email}
+                    onChange={(e) => setNewPatient({ ...newPatient, email: e.target.value })}
                   />
                 </div>
-              </div>
 
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowWalkinModal(false)}
-                  className="btn btn-secondary"
-                  style={{ flex: 1 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  style={{
-                    flex: 2,
-                    background: '#059669',
-                    border: 'none',
-                    fontWeight: 800,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px'
-                  }}
-                >
-                  <CheckCircle2 size={16} /> Confirm & Check In
-                </button>
+                <div className="form-group" style={{ marginBottom: '20px' }}>
+                  <label className="form-label">Address (optional)</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Bole, Addis Ababa"
+                    value={newPatient.address}
+                    onChange={(e) => setNewPatient({ ...newPatient, address: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setWalkinStep('find'); setWalkinError(''); setExistingMatch(null); }}
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                  >
+                    Back to search
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={walkinSubmitting}
+                    className="btn btn-primary"
+                    style={{ flex: 2, background: '#059669', border: 'none', fontWeight: 800 }}
+                  >
+                    {walkinSubmitting ? 'Registering…' : 'Register Patient'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* ── Step 1: find an existing patient ──────────────────── */
+              <div>
+                <form onSubmit={handlePatientSearch} style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Search by name, phone or email"
+                    value={patientSearch}
+                    onChange={(e) => setPatientSearch(e.target.value)}
+                    autoFocus
+                  />
+                  <button type="submit" className="btn btn-primary" disabled={searchingPatients} style={{ background: '#059669', border: 'none', whiteSpace: 'nowrap' }}>
+                    <Search size={14} /> {searchingPatients ? 'Searching…' : 'Search'}
+                  </button>
+                </form>
+
+                {patientSearchDone && (
+                  patientResults.length === 0 ? (
+                    <div style={{ fontSize: '0.86rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
+                      No registered patient matches “{patientSearch.trim()}”.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px', maxHeight: '260px', overflowY: 'auto' }}>
+                      {patientResults.map(p => (
+                        <button
+                          key={p._id}
+                          type="button"
+                          onClick={() => { setSelectedPatient(p); setWalkinError(''); }}
+                          style={{ textAlign: 'left', padding: '10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc', cursor: 'pointer' }}
+                        >
+                          <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{p.name}</div>
+                          <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                            {p.phoneNumber}{p.email ? ` • ${p.email}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                )}
+
+                <div style={{ display: 'flex', gap: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '14px' }}>
+                  <button type="button" onClick={closeWalkinModal} className="btn btn-secondary" style={{ flex: 1 }}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setWalkinStep('register'); setWalkinError(''); }}
+                    className="btn btn-primary"
+                    style={{ flex: 2, background: '#059669', border: 'none', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    <Plus size={16} /> Register New Patient
+                  </button>
+                </div>
               </div>
-            </form>
+            )}
           </div>
         </div>
       )}
@@ -1403,11 +1530,13 @@ function ReceptionDashboardContent() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
               <div>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-main)' }}>
-                  Patient Intake Record
+                  Appointment Details
                 </h3>
-                <span style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 700 }}>
-                  {showPatientDetailModal.cardNumber}
-                </span>
+                {showPatientDetailModal.cardNumber && (
+                  <span style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 700 }}>
+                    {showPatientDetailModal.cardNumber}
+                  </span>
+                )}
               </div>
               <button
                 onClick={() => setShowPatientDetailModal(null)}
@@ -1418,40 +1547,29 @@ function ReceptionDashboardContent() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.88rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Patient Name:</span>
-                <strong>{showPatientDetailModal.patientName}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Gender & Age:</span>
-                <span>{showPatientDetailModal.gender === 'male' ? 'Male' : 'Female'}, {showPatientDetailModal.age}y</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Ethiopian National ID (Fayda):</span>
-                <span>{showPatientDetailModal.nationalId}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Contact Phone:</span>
-                <span>{showPatientDetailModal.phoneNumber}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Assigned Physician:</span>
-                <strong>{showPatientDetailModal.doctorName}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Appointment Time:</span>
-                <span>{showPatientDetailModal.slotTime} ({showPatientDetailModal.date})</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Consultation Fee:</span>
-                <span style={{ color: '#15803d', fontWeight: 700 }}>{showPatientDetailModal.feePaid} ETB ({showPatientDetailModal.paymentMethod})</span>
-              </div>
-              <div style={{ marginTop: '8px' }}>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 700 }}>Chief Complaint:</span>
-                <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '8px', marginTop: '4px', fontSize: '0.85rem' }}>
-                  {showPatientDetailModal.chiefComplaint}
+              {[
+                ['Patient Name:', showPatientDetailModal.patientName],
+                ['Visit For:', showPatientDetailModal.forPerson],
+                ['Card Number:', showPatientDetailModal.cardNumber],
+                ['Assigned Physician:', showPatientDetailModal.doctorName],
+                ['Appointment Time:', `${showPatientDetailModal.slotTime} (${showPatientDetailModal.date})`],
+                ['Queue Number:', showPatientDetailModal.queueNumber ? `#${showPatientDetailModal.queueNumber}` : ''],
+                ['Status:', showPatientDetailModal.status === 'checked_in' ? 'arrived' : showPatientDetailModal.status],
+                ['Cancel Reason:', showPatientDetailModal.status === 'cancelled' ? showPatientDetailModal.cancelReason : '']
+              ].filter(([, value]) => value).map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                  <strong style={{ textAlign: 'right', textTransform: label === 'Status:' ? 'capitalize' : 'none' }}>{value}</strong>
                 </div>
-              </div>
+              ))}
+              {showPatientDetailModal.reasonForVisit && (
+                <div style={{ marginTop: '8px' }}>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 700 }}>Chief Complaint:</span>
+                  <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '8px', marginTop: '4px', fontSize: '0.85rem' }}>
+                    {showPatientDetailModal.reasonForVisit}
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
@@ -1488,6 +1606,12 @@ function ReceptionDashboardContent() {
               Are you sure you want to cancel the booking for <strong>{showCancelModal.patientName}</strong> with {showCancelModal.doctorName}?
             </p>
 
+            {cancelError && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px 12px', borderRadius: '10px', marginBottom: '12px', fontSize: '0.84rem', fontWeight: 600 }}>
+                {cancelError}
+              </div>
+            )}
+
             <div className="form-group" style={{ marginBottom: '20px' }}>
               <label className="form-label">Cancellation Reason</label>
               <textarea
@@ -1501,7 +1625,8 @@ function ReceptionDashboardContent() {
 
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
-                onClick={() => setShowCancelModal(null)}
+                onClick={closeCancelModal}
+                disabled={cancelSubmitting}
                 className="btn btn-secondary"
                 style={{ flex: 1 }}
               >
@@ -1509,6 +1634,7 @@ function ReceptionDashboardContent() {
               </button>
               <button
                 onClick={handleCancelAppointment}
+                disabled={cancelSubmitting}
                 className="btn btn-sm"
                 style={{
                   flex: 1,
@@ -1519,7 +1645,7 @@ function ReceptionDashboardContent() {
                   borderRadius: '10px'
                 }}
               >
-                Confirm Cancel
+                {cancelSubmitting ? 'Cancelling…' : 'Confirm Cancel'}
               </button>
             </div>
           </div>

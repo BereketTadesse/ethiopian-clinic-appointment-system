@@ -84,3 +84,15 @@ export const authorizeAdmin = (req, res, next) => {
     });
   }
 };
+/**
+ * Front-desk staff: admin or receptionist
+ */
+export const authorizeStaff = (req, res, next) => {
+  if (req.user && ['admin', 'receptionist'].includes(req.user.role)) {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    message: 'Access Denied: Administrative or Front Desk Receptionist privileges are required.'
+  });
+};

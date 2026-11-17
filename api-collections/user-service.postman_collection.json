@@ -1110,6 +1110,82 @@
           }
         }
       ]
+    },
+    {
+      "name": "Front Desk (admin / receptionist)",
+      "description": "Login as Admin (or a receptionist) first.",
+      "item": [
+        {
+          "name": "Search patients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/staff/patients?search=almaz",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "staff",
+                "patients"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "almaz"
+                }
+              ]
+            },
+            "description": "Name, phone or email. Min 2 characters. Max 20 results."
+          }
+        },
+        {
+          "name": "Register walk-in patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userBaseUrl}}/users/staff/patients",
+              "host": [
+                "{{userBaseUrl}}"
+              ],
+              "path": [
+                "users",
+                "staff",
+                "patients"
+              ]
+            },
+            "description": "Email optional. 409 returns the existing patient with the same phone/email. Use the returned _id as patientId when booking.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Walk-in Patient\",\n  \"phoneNumber\": \"0922000111\",\n  \"gender\": \"male\",\n  \"email\": \"\",\n  \"address\": \"Addis Ababa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data._id) pm.collectionVariables.set(\"targetUserId\", res.data._id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [

@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
+import { useRequireRole } from '@/lib/useRequireRole';
 import { useClinic } from '@/context/ClinicContext';
-import { appointmentApi, clinicApi } from '@/lib/api';
+import { appointmentApi } from '@/lib/api';
 import {
   Stethoscope,
   Calendar,
@@ -32,11 +31,28 @@ import {
   History,
   Check
 } from 'lucide-react';
+import { formatClinicRange } from '@/lib/time';
+
+// Map one appointment from GET /appointments/my-queue to the card shown in the queue.
+// Only real API fields: nothing is invented (no default age, phone, ID or blood type).
+const mapQueueItem = (item) => ({
+  id: item._id,
+  _id: item._id,
+  doctorId: item.doctorId,
+  patientName: item.patientName || 'Patient',
+  relationship: item.forPerson || 'Self',
+  cardNumber: item.cardNumber,
+  queueNumber: item.queueNumber,
+  slot: formatClinicRange(item.startTime, item.endTime),
+  date: item.date,
+  status: item.status === 'scheduled' ? 'waiting' : item.status,
+  chiefComplaint: item.reasonForVisit || ''
+});
 
 export default function DoctorDashboardPage() {
-  const { user, mounted } = useAuth();
+  const { allowed, user, mounted } = useRequireRole('doctor');
   const { clinicName, clinicLogo } = useClinic();
-  const router = useRouter();
+  const doctorId = user?._id || user?.id;
 
   // Active Filter / Tab
   const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'waiting' | 'in_consultation' | 'completed'
@@ -46,341 +62,176 @@ export default function DoctorDashboardPage() {
   const [activePatientModal, setActivePatientModal] = useState(null);
   const [chartActiveTab, setChartActiveTab] = useState('history'); // 'history' | 'conditions' | 'new_diagnosis'
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [savingDiagnosis, setSavingDiagnosis] = useState(false);
 
   // Doctor Clinical Notes & New Diagnosis Form State
   const [newDiagnosis, setNewDiagnosis] = useState('');
   const [clinicalNotes, setClinicalNotes] = useState('');
   const [prescribedMedication, setPrescribedMedication] = useState('');
-  const [patientVitals, setPatientVitals] = useState({
-    bp: '120/80 mmHg',
-    temp: '37.1 °C',
-    pulse: '76 bpm',
-    weight: '68 kg'
-  });
 
-  // Doctor's consultation slots
-  const [doctorSlots, setDoctorSlots] = useState([
-    '08:45 AM',
-    '09:30 AM',
-    '11:00 AM',
-    '02:00 PM',
-    '03:15 PM'
-  ]);
+  // Today's queue (real data only)
+  const [registeredPatients, setRegisteredPatients] = useState([]);
+  const [loadingQueue, setLoadingQueue] = useState(true);
+  const [queueError, setQueueError] = useState('');
 
-  // Patients Registered for this Doctor's Slots
-  const [registeredPatients, setRegisteredPatients] = useState([
-    {
-      id: 'apt-201',
-      patientName: 'Bereket Tadesse',
-      relationship: 'Self (Account Holder)',
-      gender: 'male',
-      age: 28,
-      birthDate: '1998-05-14',
-      phoneNumber: '+251911445566',
-      nationalId: 'ET-FAYDA-94821',
-      cardNumber: 'CLN-2026-00001',
-      queueNumber: 1,
-      slot: '08:45 AM',
-      date: 'Today, Oct 13',
-      status: 'in_consultation', // 'waiting' | 'in_consultation' | 'completed'
-      chiefComplaint: 'Persistent dry cough, mild chest tightness and evening fever for 3 days.',
-      isPaid: true,
-      bloodType: 'O+',
-      allergies: ['Penicillin', 'Dust'],
-      chronicConditions: ['Mild Seasonal Asthma'],
-      activeMedications: ['Salbutamol Inhaler PRN'],
-      emergencyContact: {
-        name: 'Tadesse Bekele',
-        phone: '+251911223344',
-        relationship: 'Father'
-      },
-      diagnosisHistory: [
-        {
-          id: 'dx-1',
-          date: 'Oct 24, 2025',
-          doctorName: 'Dr. Dawit Tadesse',
-          clinic: 'CareSync Central Clinic',
-          diagnosis: 'Acute Upper Respiratory Tract Infection (URTI)',
-          symptoms: 'Rhinorrhea, throat irritation, low-grade fever (37.8°C).',
-          notes: 'Pharynx mildly erythematous. Lungs clear bilaterally. Negative for tonsillar exudate.',
-          prescriptions: ['Amoxicillin 500mg PO TID x 7 days', 'Paracetamol 500mg PO PRN']
-        },
-        {
-          id: 'dx-2',
-          date: 'June 10, 2025',
-          doctorName: 'Dr. Selamawit Bekele',
-          clinic: 'Bole Medhanealem Clinic',
-          diagnosis: 'Mild Bronchospasm / Asthmatic Exacerbation',
-          symptoms: 'Shortness of breath after dust exposure.',
-          notes: 'Scattered expiratory wheezes in lower lobes. Chest X-ray clear.',
-          prescriptions: ['Salbutamol 100mcg MDI 2 puffs QID x 5 days', 'Cetirizine 10mg OD']
-        },
-        {
-          id: 'dx-3',
-          date: 'Jan 15, 2025',
-          doctorName: 'Dr. Yared Assefa',
-          clinic: 'Sarbet Specialist Hospital',
-          diagnosis: 'Routine Health Checkup & Annual Screen',
-          symptoms: 'Asymptomatic. Requested general blood panel and ECG.',
-          notes: 'BP 118/76 mmHg. Heart sounds regular. Blood work unremarkable.',
-          prescriptions: ['Multivitamin 1 tablet daily']
-        }
-      ]
-    },
-    {
-      id: 'apt-202',
-      patientName: 'Tigist Bekele',
-      relationship: 'Daughter (Dependent)',
-      gender: 'female',
-      age: 7,
-      birthDate: '2019-03-22',
-      phoneNumber: '+251911889900',
-      nationalId: 'ET-FAYDA-11029',
-      cardNumber: 'CLN-2026-00045',
-      queueNumber: 2,
-      slot: '09:30 AM',
-      date: 'Today, Oct 13',
-      status: 'waiting',
-      chiefComplaint: 'High fever (38.9°C), sore throat, pain swallowing solids for 2 days.',
-      isPaid: true,
-      bloodType: 'A+',
-      allergies: ['No known drug allergies'],
-      chronicConditions: ['None reported'],
-      activeMedications: ['None'],
-      emergencyContact: {
-        name: 'Bereket Tadesse',
-        phone: '+251911445566',
-        relationship: 'Father'
-      },
-      diagnosisHistory: [
-        {
-          id: 'dx-4',
-          date: 'Nov 12, 2025',
-          doctorName: 'Dr. Helina Girma',
-          clinic: 'CMC Family Care Center',
-          diagnosis: 'Pediatric Acute Otitis Media (Left Ear)',
-          symptoms: 'Left ear pain, irritability, mild fever.',
-          notes: 'Left tympanic membrane bulging and erythematous.',
-          prescriptions: ['Amoxicillin-Clavulanate 250mg susp TID x 7d', 'Ibuprofen susp 5ml PRN']
-        }
-      ]
-    },
-    {
-      id: 'apt-203',
-      patientName: 'Aster Wolde',
-      relationship: 'Mother (Dependent)',
-      gender: 'female',
-      age: 62,
-      birthDate: '1964-11-08',
-      phoneNumber: '+251911776655',
-      nationalId: 'ET-FAYDA-77218',
-      cardNumber: 'CLN-2026-00088',
-      queueNumber: 3,
-      slot: '11:00 AM',
-      date: 'Today, Oct 13',
-      status: 'waiting',
-      chiefComplaint: 'Monthly hypertension follow-up and blood pressure review. Occasional morning headaches.',
-      isPaid: true,
-      bloodType: 'B+',
-      allergies: ['Sulfonamides'],
-      chronicConditions: ['Essential Hypertension (Stage 1)', 'Mild Osteoarthritis'],
-      activeMedications: ['Amlodipine 5mg OD', 'Hydrochlorothiazide 12.5mg OD'],
-      emergencyContact: {
-        name: 'Dawit Tadesse',
-        phone: '+251911332211',
-        relationship: 'Son'
-      },
-      diagnosisHistory: [
-        {
-          id: 'dx-5',
-          date: 'Sep 02, 2025',
-          doctorName: 'Dr. Yared Assefa',
-          clinic: 'Sarbet Specialist Hospital',
-          diagnosis: 'Essential Hypertension Review',
-          symptoms: 'Mild dizziness, BP elevated at 144/92 mmHg.',
-          notes: 'Adjusted medication regimen. Fundoscopic exam normal. Recommended low sodium diet.',
-          prescriptions: ['Amlodipine 5mg daily', 'Hydrochlorothiazide 12.5mg daily']
-        }
-      ]
-    },
-    {
-      id: 'apt-204',
-      patientName: 'Kidus Tadesse',
-      relationship: 'Son (Dependent)',
-      gender: 'male',
-      age: 4,
-      birthDate: '2022-08-19',
-      phoneNumber: '+251911445566',
-      nationalId: 'ET-FAYDA-33912',
-      cardNumber: 'CLN-2026-00102',
-      queueNumber: 4,
-      slot: '02:00 PM',
-      date: 'Today, Oct 13',
-      status: 'completed',
-      chiefComplaint: 'Routine pediatric growth evaluation & seasonal immunization.',
-      isPaid: true,
-      bloodType: 'O+',
-      allergies: ['None'],
-      chronicConditions: ['None'],
-      activeMedications: ['None'],
-      emergencyContact: {
-        name: 'Bereket Tadesse',
-        phone: '+251911445566',
-        relationship: 'Father'
-      },
-      diagnosisHistory: [
-        {
-          id: 'dx-6',
-          date: 'Today, Oct 13, 2026',
-          doctorName: 'Dr. Selamawit Bekele',
-          clinic: 'Bole Medhanealem Clinic',
-          diagnosis: 'Routine Well-Child Pediatric Exam - Normal',
-          symptoms: 'Healthy 4-year-old child presenting for routine exam.',
-          notes: 'Height and weight at 65th percentile. Milestones appropriate. Lungs clear.',
-          prescriptions: ['Pediatric Vitamin Drops 1ml daily']
-        }
-      ]
-    }
-  ]);
+  // Visits completed (and saved) in this session. The API queue only returns visits that are
+  // still scheduled, so these are kept so the "Completed" tab reflects work actually saved.
+  const completedThisSession = useRef(new Map());
 
   // Fetch Today's Queue from appointment-service
   const fetchDoctorQueue = async () => {
+    setLoadingQueue(true);
+    setQueueError('');
     try {
       const res = await appointmentApi.get('/appointments/my-queue');
-      if (res.data?.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
-        const mapped = res.data.data.map(item => ({
-          id: item._id,
-          _id: item._id,
-          patientName: item.patientName || 'Registered Patient',
-          relationship: item.forPerson || 'Patient',
-          gender: 'unspecified',
-          age: 30,
-          phoneNumber: '+251 9XX XXX XXX',
-          nationalId: 'ET-FAYDA-VERIFIED',
-          cardNumber: item.cardNumber,
-          queueNumber: item.queueNumber,
-          slot: `${item.startTime} - ${item.endTime}`,
-          date: item.date || 'Today',
-          status: item.status === 'scheduled' ? 'waiting' : item.status,
-          chiefComplaint: item.reasonForVisit || 'Clinical consultation visit',
-          isPaid: true,
-          bloodType: 'Recorded in file',
-          allergies: [],
-          chronicConditions: [],
-          activeMedications: [],
-          diagnosisHistory: []
-        }));
-        setRegisteredPatients(mapped);
-      }
+      const list = Array.isArray(res.data?.data) ? res.data.data.map(mapQueueItem) : [];
+      setRegisteredPatients((prev) => {
+        // Keep the local "in consultation" marker for patients still waiting in the API queue
+        const localStatus = new Map(prev.map((p) => [p.id, p.status]));
+        const live = list.map((p) =>
+          localStatus.get(p.id) === 'in_consultation' && p.status === 'waiting' ? { ...p, status: 'in_consultation' } : p
+        );
+        const liveIds = new Set(live.map((p) => p.id));
+        const completed = [...completedThisSession.current.values()].filter((p) => !liveIds.has(p.id));
+        return [...live, ...completed];
+      });
     } catch (err) {
-      console.warn('Doctor live queue initial notice:', err?.message);
+      setQueueError(err.response?.data?.message || 'Could not load today\'s queue. Please refresh to try again.');
+    } finally {
+      setLoadingQueue(false);
     }
   };
 
   useEffect(() => {
-    if (mounted && user) {
+    if (allowed) {
       fetchDoctorQueue();
     }
-  }, [mounted, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed]);
 
-  // Update Status of Consultation
+  // Slot filter chips come from the real slots of today's booked patients
+  const doctorSlots = useMemo(
+    () => [...new Set(registeredPatients.map((p) => p.slot))].sort(),
+    [registeredPatients]
+  );
+
+  // Local-only marker: the doctor has called the patient in. Nothing is saved by this.
   const handleUpdateStatus = (patientId, newStatus) => {
     setRegisteredPatients(prev =>
       prev.map(p => (p.id === patientId ? { ...p, status: newStatus } : p))
     );
   };
 
-  // Open Full Patient Chart Modal
-  const openPatientChart = async (patient) => {
-    setActivePatientModal(patient);
-    setChartActiveTab('history');
+  // Map the patient's past visits (card history) to the chart's history entries
+  const mapHistoryEntry = (h) => ({
+    id: h._id,
+    date: h.date,
+    status: h.status,
+    doctorName: String(h.doctorId) === String(doctorId) ? (user?.name || 'You') : 'Another clinic doctor',
+    clinic: clinicName,
+    diagnosis: h.reasonForVisit || 'Consultation visit',
+    notes: h.doctorNotes || '',
+    prescriptions: h.prescription ? [h.prescription] : []
+  });
+
+  // Open Full Patient Chart Modal: loads the medical card and the visit history
+  const openPatientChart = async (patient, tab = 'history') => {
+    setActivePatientModal({
+      ...patient,
+      card: { status: 'loading', data: null },
+      diagnosisHistory: null
+    });
+    setChartActiveTab(tab);
     setNewDiagnosis('');
     setClinicalNotes('');
     setPrescribedMedication('');
     setSaveSuccessMsg('');
+    setSaveError('');
 
-    // Fetch full appointment detail & card history if valid backend ID
-    const aptId = patient._id || patient.id;
-    if (aptId && !aptId.startsWith('apt-20')) {
-      try {
-        const res = await appointmentApi.get(`/appointments/${aptId}`);
-        if (res.data?.success && res.data.data) {
-          const { cardHistory } = res.data.data;
-          if (Array.isArray(cardHistory) && cardHistory.length > 0) {
-            const mappedHistory = cardHistory.map(h => ({
-              id: h._id,
-              date: h.date,
-              doctorName: user?.name || 'Attending Physician',
-              clinic: clinicName || 'CareSync Central Clinic',
-              diagnosis: h.reasonForVisit || 'Consultation Visit',
-              symptoms: h.reasonForVisit || 'General Medical Evaluation',
-              notes: h.doctorNotes || 'Consultation completed.',
-              prescriptions: h.prescription ? [h.prescription] : ['Hydration and supportive care advised']
-            }));
-            setActivePatientModal(prev => ({
-              ...prev,
-              diagnosisHistory: mappedHistory
-            }));
-          }
-        }
-      } catch (e) {
-        console.warn('Could not fetch past card history from appointment service:', e.message);
+    const updateIfSamePatient = (patch) =>
+      setActivePatientModal((prev) => (prev && prev.id === patient.id ? { ...prev, ...patch } : prev));
+
+    const loadCard = async () => {
+      if (!patient.cardNumber) {
+        updateIfSamePatient({ card: { status: 'error', data: null } });
+        return;
       }
-    }
+      try {
+        const res = await appointmentApi.get(`/cards/${encodeURIComponent(patient.cardNumber)}`);
+        updateIfSamePatient({ card: { status: 'loaded', data: res.data?.data || null } });
+      } catch (e) {
+        updateIfSamePatient({ card: { status: 'error', data: null } });
+      }
+    };
+
+    const loadHistory = async () => {
+      try {
+        const res = await appointmentApi.get(`/appointments/${patient.id}`);
+        const history = Array.isArray(res.data?.data?.cardHistory) ? res.data.data.cardHistory : [];
+        updateIfSamePatient({ diagnosisHistory: history.map(mapHistoryEntry), historyError: '' });
+      } catch (e) {
+        updateIfSamePatient({ diagnosisHistory: [], historyError: 'Could not load the visit history.' });
+      }
+    };
+
+    await Promise.all([loadCard(), loadHistory()]);
   };
 
-  // Doctor Documents a New Clinical Diagnosis
+  // Doctor documents the diagnosis: only marked completed once the backend has saved it
   const handleSaveDiagnosis = async (e) => {
     e.preventDefault();
-    if (!newDiagnosis.trim()) return;
+    if (!newDiagnosis.trim() || !activePatientModal) return;
+    setSaveError('');
+    setSavingDiagnosis(true);
 
-    const aptId = activePatientModal?._id || activePatientModal?.id;
-    if (aptId && !aptId.startsWith('apt-20')) {
-      try {
-        await appointmentApi.patch(`/appointments/${aptId}/complete`, {
-          doctorNotes: `${newDiagnosis.trim()}. ${clinicalNotes.trim()}`.trim(),
-          prescription: prescribedMedication.trim() || 'Supportive care advised',
-          followUpDate: null
-        });
-      } catch (err) {
-        console.warn('Could not complete appointment in appointment-service:', err.message);
-      }
+    const aptId = activePatientModal._id || activePatientModal.id;
+    try {
+      const res = await appointmentApi.patch(`/appointments/${aptId}/complete`, {
+        doctorNotes: `${newDiagnosis.trim()}. ${clinicalNotes.trim()}`.trim(),
+        prescription: prescribedMedication.trim(),
+        followUpDate: null
+      });
+      const saved = res.data?.data || {};
+
+      const completedPatient = { ...activePatientModal, status: 'completed' };
+      completedThisSession.current.set(aptId, {
+        id: completedPatient.id,
+        _id: completedPatient._id,
+        doctorId: completedPatient.doctorId,
+        patientName: completedPatient.patientName,
+        relationship: completedPatient.relationship,
+        cardNumber: completedPatient.cardNumber,
+        queueNumber: completedPatient.queueNumber,
+        slot: completedPatient.slot,
+        date: completedPatient.date,
+        status: 'completed',
+        chiefComplaint: completedPatient.chiefComplaint
+      });
+
+      setActivePatientModal((prev) => (prev && prev.id === activePatientModal.id
+        ? {
+            ...prev,
+            status: 'completed',
+            diagnosisHistory: [
+              mapHistoryEntry({ ...saved, _id: saved._id || aptId, doctorId, date: saved.date || prev.date, status: 'completed', reasonForVisit: saved.reasonForVisit ?? prev.chiefComplaint }),
+              ...(prev.diagnosisHistory || []).filter((h) => h.id !== aptId)
+            ]
+          }
+        : prev));
+
+      setSaveSuccessMsg('✅ Diagnosis saved and visit marked as completed.');
+      setTimeout(() => setSaveSuccessMsg(''), 5000);
+      setNewDiagnosis('');
+      setClinicalNotes('');
+      setPrescribedMedication('');
+      setChartActiveTab('history');
+      fetchDoctorQueue();
+    } catch (err) {
+      setSaveError(err.response?.data?.message || 'The diagnosis could not be saved. Nothing was recorded — please try again.');
+    } finally {
+      setSavingDiagnosis(false);
     }
-
-    const newDxEntry = {
-      id: `dx-${Date.now()}`,
-      date: 'Today',
-      doctorName: user?.name || 'Dr. Selamawit Bekele',
-      clinic: clinicName || 'CareSync Central Clinic - Bole Branch',
-      diagnosis: newDiagnosis.trim(),
-      symptoms: activePatientModal.chiefComplaint,
-      notes: clinicalNotes.trim() || 'Physical examination conducted. Vitals recorded within acceptable parameters.',
-      prescriptions: prescribedMedication.trim()
-        ? prescribedMedication.split(',').map(m => m.trim())
-        : ['Supportive care & hydration advised']
-    };
-
-    // Update patient record
-    const updatedHistory = [newDxEntry, ...activePatientModal.diagnosisHistory];
-    const updatedPatient = {
-      ...activePatientModal,
-      status: 'completed',
-      diagnosisHistory: updatedHistory
-    };
-
-    setActivePatientModal(updatedPatient);
-    setRegisteredPatients(prev =>
-      prev.map(p => (p.id === activePatientModal.id ? updatedPatient : p))
-    );
-
-    setSaveSuccessMsg('✅ Clinical diagnosis and treatment documented in patient medical file!');
-    setTimeout(() => setSaveSuccessMsg(''), 5000);
-
-    // Reset form fields
-    setNewDiagnosis('');
-    setClinicalNotes('');
-    setPrescribedMedication('');
-    setChartActiveTab('history');
   };
 
   // Filter patients by status & slot
@@ -393,6 +244,19 @@ export default function DoctorDashboardPage() {
   const waitingCount = registeredPatients.filter(p => p.status === 'waiting').length;
   const inConsultCount = registeredPatients.filter(p => p.status === 'in_consultation').length;
   const completedCount = registeredPatients.filter(p => p.status === 'completed').length;
+
+  // Not logged in / not a doctor: useRequireRole redirects; render nothing meanwhile
+  if (!allowed) {
+    return (
+      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+        {mounted ? 'Redirecting…' : 'Loading…'}
+      </div>
+    );
+  }
+
+  // Card data shown in the chart (null until loaded)
+  const chartCard = activePatientModal?.card?.status === 'loaded' ? activePatientModal.card.data : null;
+  const chartCardStatus = activePatientModal?.card?.status;
 
   return (
     <div style={{ backgroundColor: 'var(--bg-page)', minHeight: '92vh', padding: '36px 0 60px' }}>
@@ -436,7 +300,7 @@ export default function DoctorDashboardPage() {
                 <Stethoscope size={15} /> {clinicName} • Attending Physician Portal
               </div>
               <h1 style={{ fontSize: '1.9rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px', margin: 0 }}>
-                Welcome, {user?.name || 'Dr. Selamawit Bekele'} 👨‍⚕️
+                Welcome, {user?.name || 'Doctor'} 👨‍⚕️
               </h1>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
                 Review patients registered for your consultation slots at {clinicName}, inspect complete diagnosis history, and document clinical evaluations.
@@ -579,7 +443,23 @@ export default function DoctorDashboardPage() {
           </div>
 
           {/* Patients Queue Cards Grid */}
-          {filteredPatients.length === 0 ? (
+          {queueError ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '40px 20px', border: '1px solid #fecaca', background: '#fef2f2' }}>
+              <AlertCircle size={32} style={{ color: '#dc2626', marginBottom: '10px' }} />
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#991b1b' }}>{queueError}</h3>
+              <button onClick={fetchDoctorQueue} className="btn btn-secondary btn-sm" style={{ marginTop: '10px' }}>Try again</button>
+            </div>
+          ) : loadingQueue && registeredPatients.length === 0 ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+              Loading today's queue…
+            </div>
+          ) : registeredPatients.length === 0 ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px' }}>
+              <Users size={36} style={{ color: '#cbd5e1', marginBottom: '10px' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>No patients in today's queue</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Booked patients for today will appear here.</p>
+            </div>
+          ) : filteredPatients.length === 0 ? (
             <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px' }}>
               <Users size={36} style={{ color: '#cbd5e1', marginBottom: '10px' }} />
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>No patients matching this filter</h3>
@@ -655,7 +535,7 @@ export default function DoctorDashboardPage() {
                       {patient.patientName}
                     </h3>
                     <div style={{ fontSize: '0.82rem', color: '#4f46e5', fontWeight: 700 }}>
-                      {patient.relationship} • {patient.age} Yrs ({patient.gender}) • Blood: {patient.bloodType}
+                      {patient.relationship}
                     </div>
                   </div>
 
@@ -665,9 +545,6 @@ export default function DoctorDashboardPage() {
                       <Clock size={15} style={{ color: '#4f46e5' }} />
                       <span>{patient.date} at {patient.slot}</span>
                     </div>
-                    <span style={{ fontSize: '0.72rem', color: '#059669', background: '#ecfdf5', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                      Card Paid (100 ETB)
-                    </span>
                   </div>
 
                   {/* Chief Complaint / Symptoms */}
@@ -676,14 +553,8 @@ export default function DoctorDashboardPage() {
                       Chief Complaint / Reason for Visit:
                     </div>
                     <p style={{ margin: 0, color: '#334155', lineHeight: 1.4, fontStyle: 'italic' }}>
-                      "{patient.chiefComplaint}"
+                      {patient.chiefComplaint ? `"${patient.chiefComplaint}"` : '—'}
                     </p>
-                  </div>
-
-                  {/* Past Diagnosis count highlight */}
-                  <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <History size={14} style={{ color: '#4f46e5' }} />
-                    <span><strong>{patient.diagnosisHistory.length}</strong> previous diagnoses in medical file</span>
                   </div>
 
                   {/* Action Buttons */}
@@ -708,7 +579,8 @@ export default function DoctorDashboardPage() {
 
                     {patient.status === 'in_consultation' && (
                       <button
-                        onClick={() => handleUpdateStatus(patient.id, 'completed')}
+                        onClick={() => openPatientChart(patient, 'new_diagnosis')}
+                        title="Document the diagnosis to complete the visit"
                         className="btn btn-secondary btn-sm"
                         style={{ flex: 1, fontSize: '0.76rem', color: '#059669', fontWeight: 700 }}
                       >
@@ -762,7 +634,7 @@ export default function DoctorDashboardPage() {
                   {activePatientModal.patientName} (የታካሚ ማህደር)
                 </h2>
                 <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  Card: <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{activePatientModal.cardNumber}</strong> • Fayda: {activePatientModal.nationalId} • Queue #{activePatientModal.queueNumber}
+                  Card: <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{activePatientModal.cardNumber}</strong> • Queue #{activePatientModal.queueNumber ?? '—'}
                 </div>
               </div>
 
@@ -783,27 +655,47 @@ export default function DoctorDashboardPage() {
               padding: '14px 18px',
               marginBottom: '18px',
               display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
+              gridTemplateColumns: 'repeat(3, 1fr)',
               gap: '10px',
               fontSize: '0.8rem'
             }}>
               <div>
-                <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Age / Gender</span>
-                <strong style={{ color: '#334155' }}>{activePatientModal.age} Yrs ({activePatientModal.gender})</strong>
+                <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Visit For</span>
+                <strong style={{ color: '#334155' }}>{activePatientModal.relationship}</strong>
+              </div>
+              <div>
+                <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Name on Card</span>
+                <strong style={{ color: '#334155' }}>{chartCard?.fullName || '—'}</strong>
               </div>
               <div>
                 <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Blood Group</span>
-                <strong style={{ color: '#ef4444' }}>{activePatientModal.bloodType}</strong>
-              </div>
-              <div>
-                <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Recorded BP</span>
-                <strong style={{ color: '#334155' }}>{patientVitals.bp}</strong>
-              </div>
-              <div>
-                <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Allergies</span>
-                <strong style={{ color: '#d97706' }}>{activePatientModal.allergies.join(', ')}</strong>
+                <strong style={{ color: '#ef4444' }}>{chartCard?.bloodType || (chartCardStatus === 'loading' ? '…' : 'Not recorded')}</strong>
               </div>
             </div>
+
+            {/* ALLERGIES — shown prominently; never presented as "none" unless the card was actually loaded */}
+            {chartCardStatus === 'loading' && (
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px 14px', marginBottom: '18px', fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                Loading medical card (allergies, blood group)…
+              </div>
+            )}
+            {chartCardStatus === 'error' && (
+              <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: '12px', padding: '12px 14px', marginBottom: '18px', fontSize: '0.88rem', color: '#991b1b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={18} /> Could not load the medical card — confirm allergies with the patient before prescribing.
+              </div>
+            )}
+            {chartCardStatus === 'loaded' && (
+              chartCard?.allergies?.length > 0 ? (
+                <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: '12px', padding: '12px 14px', marginBottom: '18px', fontSize: '0.9rem', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={18} />
+                  <span><strong>ALLERGIES:</strong> {chartCard.allergies.join(', ')}</span>
+                </div>
+              ) : (
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '10px 14px', marginBottom: '18px', fontSize: '0.84rem', color: '#475569' }}>
+                  No allergies recorded on this patient's card. Confirm with the patient.
+                </div>
+              )
+            )}
 
             {/* Current Chief Complaint for This Slot */}
             <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '12px', padding: '12px 14px', marginBottom: '18px', fontSize: '0.84rem' }}>
@@ -811,7 +703,7 @@ export default function DoctorDashboardPage() {
                 Today's Consultation Complaint ({activePatientModal.slot}):
               </div>
               <div style={{ color: '#1e1b4b', fontWeight: 600, marginTop: '3px' }}>
-                "{activePatientModal.chiefComplaint}"
+                {activePatientModal.chiefComplaint ? `"${activePatientModal.chiefComplaint}"` : '—'}
               </div>
             </div>
 
@@ -823,7 +715,7 @@ export default function DoctorDashboardPage() {
                 className={`btn btn-sm ${chartActiveTab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ fontSize: '0.82rem' }}
               >
-                <History size={14} /> Previous Diagnoses ({activePatientModal.diagnosisHistory.length})
+                <History size={14} /> Visit History ({activePatientModal.diagnosisHistory ? activePatientModal.diagnosisHistory.length : '…'})
               </button>
               <button
                 type="button"
@@ -850,8 +742,17 @@ export default function DoctorDashboardPage() {
                   Chronological record of past physician-documented clinical diagnoses and treatments:
                 </div>
 
+                {activePatientModal.diagnosisHistory === null && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading visit history…</div>
+                )}
+                {activePatientModal.historyError && (
+                  <div style={{ color: '#b91c1c', fontSize: '0.84rem', fontWeight: 700 }}>{activePatientModal.historyError}</div>
+                )}
+                {Array.isArray(activePatientModal.diagnosisHistory) && activePatientModal.diagnosisHistory.length === 0 && !activePatientModal.historyError && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>No previous visits on this card.</div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
-                  {activePatientModal.diagnosisHistory.map((entry, index) => (
+                  {(activePatientModal.diagnosisHistory || []).map((entry, index) => (
                     <div
                       key={entry.id || index}
                       style={{
@@ -872,7 +773,7 @@ export default function DoctorDashboardPage() {
                           </div>
                         </div>
                         <span style={{ fontSize: '0.72rem', background: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 700 }}>
-                          {entry.date}
+                          {entry.date}{entry.status ? ` • ${entry.status}` : ''}
                         </span>
                       </div>
 
@@ -901,49 +802,67 @@ export default function DoctorDashboardPage() {
               </div>
             )}
 
-            {/* ── TAB 2: CHRONIC CONDITIONS & ACTIVE MEDS ───────────── */}
+            {/* ── TAB 2: CHRONIC CONDITIONS & ACTIVE MEDS (from the patient's card) ── */}
             {chartActiveTab === 'conditions' && (
               <div style={{ fontSize: '0.85rem' }}>
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
-                  <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Heart size={16} style={{ color: '#ef4444' }} /> Documented Chronic Conditions:
-                  </h4>
-                  {activePatientModal.chronicConditions && activePatientModal.chronicConditions.length > 0 ? (
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {activePatientModal.chronicConditions.map((cond, cIdx) => (
-                        <span key={cIdx} style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '4px 10px', borderRadius: '6px', fontWeight: 700 }}>
-                          {cond}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)' }}>No chronic conditions reported.</div>
-                  )}
-                </div>
-
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
-                  <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Pill size={16} style={{ color: '#4f46e5' }} /> Current Active Medications:
-                  </h4>
-                  {activePatientModal.activeMedications && activePatientModal.activeMedications.length > 0 ? (
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {activePatientModal.activeMedications.map((med, mIdx) => (
-                        <span key={mIdx} style={{ background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca', padding: '4px 10px', borderRadius: '6px', fontWeight: 700 }}>
-                          {med}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)' }}>No active daily medications.</div>
-                  )}
-                </div>
-
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px' }}>
-                  <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 6px' }}>Emergency Contact:</h4>
-                  <div style={{ color: '#334155' }}>
-                    <strong>{activePatientModal.emergencyContact?.name}</strong> ({activePatientModal.emergencyContact?.relationship}) • Tel: {activePatientModal.emergencyContact?.phone}
+                {chartCardStatus === 'loading' && (
+                  <div style={{ color: 'var(--text-muted)' }}>Loading medical card…</div>
+                )}
+                {chartCardStatus === 'error' && (
+                  <div style={{ color: '#991b1b', fontWeight: 700 }}>
+                    Could not load the medical card — confirm conditions, medications and allergies with the patient.
                   </div>
-                </div>
+                )}
+                {chartCardStatus === 'loaded' && (
+                  <>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
+                      <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Heart size={16} style={{ color: '#ef4444' }} /> Documented Chronic Conditions:
+                      </h4>
+                      {chartCard?.chronicConditions?.length > 0 ? (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {chartCard.chronicConditions.map((cond, cIdx) => (
+                            <span key={cIdx} style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '4px 10px', borderRadius: '6px', fontWeight: 700 }}>
+                              {cond}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)' }}>None recorded on the card.</div>
+                      )}
+                    </div>
+
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
+                      <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Pill size={16} style={{ color: '#4f46e5' }} /> Current Medications:
+                      </h4>
+                      {chartCard?.currentMedications?.length > 0 ? (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {chartCard.currentMedications.map((med, mIdx) => (
+                            <span key={mIdx} style={{ background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca', padding: '4px 10px', borderRadius: '6px', fontWeight: 700 }}>
+                              {med}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)' }}>None recorded on the card.</div>
+                      )}
+                    </div>
+
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontWeight: 800, fontSize: '0.92rem', color: '#1e1b4b', margin: '0 0 6px' }}>Emergency Contact:</h4>
+                      {chartCard?.emergencyContactName || chartCard?.emergencyContactPhone ? (
+                        <div style={{ color: '#334155' }}>
+                          <strong>{chartCard.emergencyContactName || '—'}</strong>
+                          {chartCard.emergencyContactRelationship ? ` (${chartCard.emergencyContactRelationship})` : ''}
+                          {chartCard.emergencyContactPhone ? ` • Tel: ${chartCard.emergencyContactPhone}` : ''}
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)' }}>Not recorded.</div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -955,6 +874,16 @@ export default function DoctorDashboardPage() {
                   <span>Only authorized licensed physicians can document official clinical diagnoses into the Ethiopian patient health card.</span>
                 </div>
 
+                {activePatientModal.status === 'completed' && (
+                  <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '10px', padding: '10px 12px', marginBottom: '16px', fontSize: '0.84rem', color: '#065f46', fontWeight: 700 }}>
+                    This visit is already completed and saved.
+                  </div>
+                )}
+                {saveError && (
+                  <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '10px 12px', marginBottom: '16px', fontSize: '0.84rem', color: '#991b1b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <AlertCircle size={16} /> {saveError}
+                  </div>
+                )}
                 <form onSubmit={handleSaveDiagnosis}>
                   <div className="form-group">
                     <label className="form-label">Clinical Diagnosis *</label>
@@ -1002,9 +931,10 @@ export default function DoctorDashboardPage() {
                     <button
                       type="submit"
                       className="btn btn-primary"
+                      disabled={savingDiagnosis || activePatientModal.status === 'completed'}
                       style={{ flex: 1.8, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                     >
-                      <Check size={16} /> Save Diagnosis & Complete Visit
+                      <Check size={16} /> {savingDiagnosis ? 'Saving…' : 'Save Diagnosis & Complete Visit'}
                     </button>
                   </div>
                 </form>

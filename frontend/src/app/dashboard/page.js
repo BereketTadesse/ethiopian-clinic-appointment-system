@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useClinic } from '@/context/ClinicContext';
 import API, { clinicApi, appointmentApi } from '@/lib/api';
+import { clinicDateFromToday, clinicNowHHMM, formatClinicDate, formatClinicRange, toEthiopianTime } from '@/lib/time';
 import {
   Calendar,
   Clock,
@@ -88,9 +89,8 @@ export default function DashboardPage() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState(null);
 
-  // Step 4: Payment & Reason
-  const [paymentMethod, setPaymentMethod] = useState('telebirr'); // 'telebirr' | 'cbebirr' | 'chapa'
-  const [paymentPhone, setPaymentPhone] = useState('0911223344');
+  // Step 4: Reason & confirmation. There is no online payment: the fee is paid at reception.
+  const CONSULTATION_FEE_NOTE = 'Consultation fee: 100 ETB — pay at the clinic reception on arrival.';
   const [reasonForVisit, setReasonForVisit] = useState('');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [latestBookedApt, setLatestBookedApt] = useState(null);
@@ -98,15 +98,15 @@ export default function DashboardPage() {
   // Dynamic 7-day date options
   const generateUpcomingDates = () => {
     const dates = [];
-    const today = new Date();
     for (let i = 0; i < 7; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      const iso = d.toISOString().split('T')[0];
+      // Calendar date in Addis Ababa (not UTC), formatted without timezone shifting
+      const iso = clinicDateFromToday(i);
+      const d = new Date(`${iso}T12:00:00Z`);
+      const fmt = (opts) => d.toLocaleDateString('en-US', { ...opts, timeZone: 'UTC' });
       let label;
-      if (i === 0) label = `Today, ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-      else if (i === 1) label = `Tomorrow, ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-      else label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      if (i === 0) label = `Today, ${fmt({ month: 'short', day: 'numeric' })}`;
+      else if (i === 1) label = `Tomorrow, ${fmt({ month: 'short', day: 'numeric' })}`;
+      else label = fmt({ weekday: 'short', month: 'short', day: 'numeric' });
       dates.push({ iso, label });
     }
     return dates;
@@ -124,18 +124,30 @@ export default function DashboardPage() {
   const [cardSlotsMap, setCardSlotsMap] = useState({});
   const [loadingCardSlots, setLoadingCardSlots] = useState(false);
 
-  // Standardized sequential Clinic Card number
-  const makeCardNumber = (seed) => {
-    const cleanSeed = String(seed || '00001').slice(-5);
-    return `CLN-2026-${cleanSeed.padStart(5, '0')}`;
+  // Real clinic cards on this account (one per person) from appointment-service.
+  // familyMemberId null = the account holder.
+  const [familyCards, setFamilyCards] = useState([]);
+  const CARD_PENDING = 'Card number assigned at first booking';
+  const cardFor = (memberId) => {
+    const accountId = user?._id || user?.id;
+    const isSelf = !memberId || memberId === 'self' || memberId === accountId;
+    return familyCards.find(c => (isSelf ? !c.familyMemberId : String(c.familyMemberId) === String(memberId))) || null;
+  };
+  const cardNumberFor = (memberId) => cardFor(memberId)?.cardNumber || CARD_PENDING;
+  const fetchFamilyCards = async () => {
+    try {
+      const res = await appointmentApi.get('/cards/family');
+      setFamilyCards(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      console.log('Notice: Could not load clinic cards', err?.message);
+    }
   };
 
   // Helper to format slot time safely whether it is a MongoDB object or string
   const getSlotDisplayString = (slot) => {
     if (!slot) return 'No slot selected';
     if (typeof slot === 'string') return slot;
-    if (slot.startTime && slot.endTime) return `${slot.startTime} - ${slot.endTime}`;
-    if (slot.startTime) return slot.startTime;
+    if (slot.startTime) return formatClinicRange(slot.startTime, slot.endTime);
     if (slot.time) return slot.time;
     return 'Confirmed Time Slot';
   };
@@ -226,11 +238,10 @@ export default function DashboardPage() {
               _id: docId,
               name: formattedName,
               specialty: doc.specialization || 'General Practice',
-              experience: expYears ? `${expYears} Years Exp` : 'Licensed Physician',
-              location: doc.bio || (doc.room ? `Room ${doc.room}` : 'Central Consultation Suite'),
+              experience: expYears ? `${expYears} yrs experience` : '',
+              location: doc.room ? `Room ${doc.room}` : '',
               availableDays: Array.isArray(doc.availableDays) ? doc.availableDays : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
               availableToday: doc.isActive ?? true,
-              rating: 4.9,
               startTime: doc.startTime || '08:00',
               endTime: doc.endTime || '17:00',
               slots: []
@@ -288,6 +299,7 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchFamilyMembers();
     fetchMyCard();
+    fetchFamilyCards();
     fetchAppointments();
     fetchDoctors();
   }, []);
@@ -373,20 +385,31 @@ export default function DashboardPage() {
       relationship: 'Account Holder',
       forPerson: 'Self (Primary Account Holder)',
       memberId: 'self',
-      cardNumber: patientCard?.cardNumber || 'Auto-generated upon booking (በቀጠሮ ጊዜ ይወጣል)',
+      cardNumber: patientCard?.cardNumber || CARD_PENDING,
       dateOfBirth: user?.birthDate || null,
       gender: user?.gender || 'Not specified',
-      nationalId: user?.nationalId || null,
-      isPaid: Boolean(patientCard?.cardNumber)
+      nationalId: user?.nationalId || null
     };
     setActivePatient(defaultPatient);
     if (doctors.length > 0) {
       setSelectedDoctor(doctors[0]);
     }
-    setPaymentPhone(user?.phoneNumber || '0911223344');
     setFlowStep('patient');
     setShowFlowModal(true);
   };
+
+  // Sidebar "Book Appointment" (event when already here, ?book=1 when arriving from another page)
+  useEffect(() => {
+    if (loadingDoctors) return;
+    const open = () => startUnifiedFlow();
+    if (new URLSearchParams(window.location.search).get('book') === '1') {
+      window.history.replaceState(null, '', '/dashboard');
+      open();
+    }
+    window.addEventListener('app:open-booking', open);
+    return () => window.removeEventListener('app:open-booking', open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingDoctors, doctors, patientCard]);
 
   // Launching flow for a specific person (e.g. from family members card)
   const startFlowForPerson = (member) => {
@@ -396,11 +419,10 @@ export default function DashboardPage() {
       relationship: member.relationship || 'Dependent',
       forPerson: `${member.fullName} (${member.relationship})`,
       memberId: member._id,
-      cardNumber: makeCardNumber(member._id),
+      cardNumber: cardNumberFor(member._id),
       dateOfBirth: member.dateOfBirth,
       gender: member.gender,
-      nationalId: member.nationalId,
-      isPaid: false
+      nationalId: member.nationalId
     };
     setActivePatient(patientObj);
     setFlowRecipientType('family');
@@ -415,23 +437,22 @@ export default function DashboardPage() {
 
   // View Digital Clinic Card Viewer
   const openCardViewer = (item) => {
-    const cardData = patientCard || {};
+    // Whose card? Appointments carry familyMemberId (null = account holder).
+    const personId = item?.familyMemberId || item?.memberId || 'self';
+    const isSelfCard = !personId || personId === 'self';
+    const cardData = (isSelfCard ? patientCard : cardFor(personId)) || {};
     setActivePatient({
       patientName: item?.patientName || item?.fullName || user?.name || 'Patient',
-      relationship: item?.relationship || (item?.forPerson?.includes('Self') ? 'Account Holder' : item?.forPerson) || 'Account Holder',
-      cardNumber: item?.cardNumber || cardData.cardNumber || makeCardNumber(user?._id || '00001'),
-      memberId: item?._id || item?.memberId || 'self',
+      relationship: item?.relationship || (isSelfCard ? 'Account Holder' : item?.forPerson) || 'Account Holder',
+      cardNumber: item?.cardNumber || cardData.cardNumber || CARD_PENDING,
+      memberId: personId,
       dateOfBirth: item?.dateOfBirth || user?.birthDate || null,
       gender: item?.gender || user?.gender || 'Not specified',
       nationalId: item?.nationalId || user?.nationalId || null,
       doctorName: item?.doctorName,
       clinic: item?.clinic || clinicName || 'CareSync Ethiopian Health Network',
       bloodType: cardData.bloodType || 'Not specified',
-      allergies: cardData.allergies?.length > 0 ? cardData.allergies.join(', ') : 'None recorded',
-      isPaid: true,
-      paymentTxnId: item?.paymentTxnId || 'TXN-TB-2026-88192',
-      paymentMethod: item?.paymentMethod || 'Telebirr',
-      paymentFee: item?.paymentFee || '100 ETB'
+      allergies: cardData.allergies?.length > 0 ? cardData.allergies.join(', ') : 'None recorded'
     });
     setFlowStep('card_viewer');
     setShowFlowModal(true);
@@ -445,11 +466,10 @@ export default function DashboardPage() {
       relationship: 'Account Holder',
       forPerson: 'Self (Primary Account Holder)',
       memberId: 'self',
-      cardNumber: patientCard?.cardNumber || 'Auto-generated upon booking',
+      cardNumber: patientCard?.cardNumber || CARD_PENDING,
       dateOfBirth: user?.birthDate || null,
       gender: user?.gender || 'Not specified',
-      nationalId: user?.nationalId || null,
-      isPaid: Boolean(patientCard?.cardNumber)
+      nationalId: user?.nationalId || null
     };
     setActivePatient(defaultPatient);
     setSelectedDoctor(doctor);
@@ -477,11 +497,10 @@ export default function DashboardPage() {
           relationship: 'Account Holder',
           forPerson: 'Self (Primary Account Holder)',
           memberId: 'self',
-          cardNumber: makeCardNumber(user?._id || '00001'),
+          cardNumber: patientCard?.cardNumber || CARD_PENDING,
           dateOfBirth: user?.birthDate || null,
           gender: user?.gender || 'Not specified',
-          nationalId: user?.nationalId || null,
-          isPaid: false
+          nationalId: user?.nationalId || null
         };
       }
 
@@ -497,11 +516,10 @@ export default function DashboardPage() {
           relationship: found.relationship,
           forPerson: `${found.fullName} (${found.relationship})`,
           memberId: found._id,
-          cardNumber: makeCardNumber(found._id),
+          cardNumber: cardNumberFor(found._id),
           dateOfBirth: found.dateOfBirth,
           gender: found.gender,
-          nationalId: found.nationalId,
-          isPaid: false
+          nationalId: found.nationalId
         };
       }
 
@@ -527,17 +545,15 @@ export default function DashboardPage() {
           return;
         }
 
-        const cardNum = makeCardNumber(generatedId);
         patientData = {
           patientName: newPerson.fullName,
           relationship: newPerson.relationship,
           forPerson: `${newPerson.fullName} (${newPerson.relationship})`,
           memberId: generatedId,
-          cardNumber: cardNum,
+          cardNumber: CARD_PENDING, // brand-new person: card is created by their first booking
           dateOfBirth: newPerson.dateOfBirth,
           gender: newPerson.gender,
-          nationalId: newPerson.nationalId,
-          isPaid: false
+          nationalId: newPerson.nationalId
         };
 
         // Reset new person form
@@ -587,7 +603,7 @@ export default function DashboardPage() {
       const doctorId = selectedDoctor._id || selectedDoctor.id;
       // selectedSlot can be an object from availableSlots with _id, or fallback string/id
       const slotId = typeof selectedSlot === 'object' ? (selectedSlot._id || selectedSlot.id) : selectedSlot;
-      const targetDate = selectedDateObj?.iso || new Date().toISOString().split('T')[0];
+      const targetDate = selectedDateObj?.iso || clinicDateFromToday(0);
       // Booking for a registered family member: send their real id so the backend gives them
       // their own patient card and history. (Only real 24-char ids; never the account holder.)
       const memberId = activePatient?.memberId;
@@ -609,51 +625,45 @@ export default function DashboardPage() {
 
       const res = await appointmentApi.post('/appointments', bookingPayload);
       const savedApt = res.data?.data;
+      if (!savedApt?._id) {
+        throw new Error('The clinic did not confirm this booking. Please check "My appointments" before trying again.');
+      }
 
-      const generatedTxnId = `TXN-${paymentMethod === 'telebirr' ? 'TB' : paymentMethod === 'cbebirr' ? 'CBE' : 'CHP'}-2026-${Math.floor(10000 + Math.random() * 90000)}`;
-      const paymentMethodName = paymentMethod === 'telebirr' ? 'Telebirr' : paymentMethod === 'cbebirr' ? 'CBE Birr' : 'Chapa';
-
-      const slotTimeDisplay = getSlotDisplayString(selectedSlot);
+      const slotTimeDisplay = savedApt.startTime && savedApt.endTime
+        ? formatClinicRange(savedApt.startTime, savedApt.endTime)
+        : getSlotDisplayString(selectedSlot);
 
       const updatedPatient = {
         ...activePatient,
-        cardNumber: savedApt?.cardNumber || activePatient?.cardNumber,
-        isPaid: true,
-        paymentTxnId: generatedTxnId,
-        paymentMethod: paymentMethodName,
-        paymentFee: '100 ETB',
-        paymentDate: selectedDateObj?.label || 'Today'
+        cardNumber: savedApt.cardNumber
       };
 
       const newApt = {
-        id: savedApt?._id || `apt-${Date.now()}`,
-        _id: savedApt?._id,
+        id: savedApt._id,
+        _id: savedApt._id,
+        familyMemberId: savedApt.familyMemberId || null,
         doctorName: selectedDoctor.name,
         specialty: selectedDoctor.specialty,
         clinic: selectedDoctor.location || clinicName,
-        date: selectedDateObj?.label || targetDate,
+        date: selectedDateObj?.label || savedApt.date,
         time: slotTimeDisplay,
-        forPerson: activePatient?.forPerson || 'Self (Primary Account Holder)',
-        patientName: activePatient?.patientName || user?.name || 'Account Holder',
-        cardNumber: savedApt?.cardNumber || activePatient?.cardNumber || makeCardNumber(user?._id || '00001'),
-        queueNumber: savedApt?.queueNumber || 1,
-        status: savedApt?.status || 'scheduled',
-        room: selectedDoctor.location || `Suite 201`,
-        reason: reasonForVisit.trim() || 'General Clinical Consultation',
-        paymentFee: '100 ETB',
-        paymentMethod: paymentMethodName,
-        paymentTxnId: generatedTxnId,
-        isPaid: true
+        forPerson: savedApt.forPerson || activePatient?.forPerson,
+        patientName: savedApt.patientName || activePatient?.patientName,
+        cardNumber: savedApt.cardNumber,
+        queueNumber: savedApt.queueNumber,
+        status: savedApt.status,
+        room: selectedDoctor.location || '',
+        reason: savedApt.reasonForVisit || reasonForVisit.trim()
       };
 
       setActivePatient(updatedPatient);
       setLatestBookedApt(newApt);
       setFlowStep('complete');
 
-      setBookingSuccess(`🎉 Card officially linked & consultation spot confirmed! 100 ETB verified via ${paymentMethodName} (Ref: ${generatedTxnId}). Queue #${newApt.queueNumber}`);
+      setBookingSuccess(`🎉 Appointment confirmed for ${newApt.date} at ${slotTimeDisplay}${newApt.queueNumber ? ` (Queue #${newApt.queueNumber})` : ''}. ${CONSULTATION_FEE_NOTE}`);
 
       // Refresh live appointments & patient card
-      await Promise.allSettled([fetchAppointments(), fetchMyCard()]);
+      await Promise.allSettled([fetchAppointments(), fetchMyCard(), fetchFamilyCards()]);
       setTimeout(() => setBookingSuccess(''), 7000);
     } catch (err) {
       console.error('Booking failed:', err);
@@ -684,553 +694,258 @@ export default function DashboardPage() {
     <div style={{ backgroundColor: 'var(--bg-page)', minHeight: '90vh', padding: '36px 0 60px' }}>
       <div className="container">
         
-        {/* Welcome Header */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: '32px',
-          flexWrap: 'wrap',
-          gap: '16px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {clinicLogo && (
-              <div
-                style={{
-                  width: '56px',
-                  height: '56px',
-                  borderRadius: '14px',
-                  background: 'white',
-                  border: '1px solid #e2e8f0',
-                  padding: '4px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.06)',
-                  flexShrink: 0
-                }}
-              >
-                <img
-                  src={clinicLogo}
-                  alt={clinicName}
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px' }}
-                />
-              </div>
-            )}
-            <div>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#4f46e5', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>
-                <Shield size={14} /> {clinicName} • Patient Portal
-              </div>
-              <h1 style={{ fontSize: '1.85rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px', margin: 0 }}>
-                Welcome, {user?.name || 'Valued Patient'} 👋
-              </h1>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '4px' }}>
-                Take clinic cards with integrated 4-step Telebirr/CBE payment, book consultation spots, and view your live queue numbers at {clinicName}.
-              </p>
-            </div>
+        {/* Greeting + the one primary action */}
+        <div className="pd-head">
+          <div style={{ minWidth: 0 }}>
+            <h1 className="pd-title">Selam, {(user?.name || '').split(' ')[0] || 'there'} 👋</h1>
+            <p className="pd-sub">
+              {loadingAppointments
+                ? 'Loading your appointments…'
+                : appointments.length === 0
+                  ? 'You have no upcoming appointments.'
+                  : `You have ${appointments.length} upcoming appointment${appointments.length > 1 ? 's' : ''}.`}
+              {patientCard?.cardNumber && (
+                <>
+                  {' '}Card{' '}
+                  <button type="button" className="pd-link" onClick={() => openCardViewer({ patientName: user?.name, forPerson: 'Self', cardNumber: patientCard.cardNumber })}>
+                    {patientCard.cardNumber}
+                  </button>
+                </>
+              )}
+            </p>
           </div>
-
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            {/* Primary Action: Book Appointment Flow */}
-            <button
-              onClick={startUnifiedFlow}
-              className="btn btn-primary btn-sm"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 800 }}
-            >
-              <Calendar size={16} /> Book an Appointment (ቀጠሮ ያስይዙ)
-            </button>
-
-            <Link href="/family-members" className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              <Users size={16} /> Family Members ({familyMembers.length})
-            </Link>
-
-            <Link href="/profile" className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              <User size={16} /> My Patient Profile
-            </Link>
-          </div>
+          <button onClick={startUnifiedFlow} className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 800 }}>
+            <Plus size={18} /> Book appointment
+          </button>
         </div>
 
-        {/* Global Success Notification */}
         {bookingSuccess && (
-          <div style={{
-            background: '#ecfdf5',
-            border: '1px solid #a7f3d0',
-            color: '#047857',
-            padding: '14px 18px',
-            borderRadius: '12px',
-            marginBottom: '24px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.12)'
-          }}>
-            <CheckCircle2 size={20} />
-            <span style={{ fontWeight: 600 }}>{bookingSuccess}</span>
+          <div className="pd-banner" role="status">
+            <CheckCircle2 size={18} /> <span>{bookingSuccess}</span>
           </div>
         )}
 
-        {/* Quick Stats Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '18px', marginBottom: '32px' }}>
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontWeight: 600 }}>Active Consultations</span>
-              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Calendar size={18} />
-              </div>
-            </div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>{appointments.length}</div>
-            <div style={{ fontSize: '0.78rem', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>Queue spot live</div>
-          </div>
-
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontWeight: 600 }}>Registered Family Cards</span>
-              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Users size={18} />
-              </div>
-            </div>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>{familyMembers.length + 1}</div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>You + {familyMembers.length} Dependents</div>
-          </div>
-
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontWeight: 600 }}>Primary Clinic Card</span>
-              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#fef2f2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CreditCard size={18} />
-              </div>
-            </div>
-            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '6px', fontFamily: 'monospace' }}>
-              {patientCard?.cardNumber || (loadingCard ? 'Checking...' : 'Not Issued Yet (ያልወጣ)')}
-            </div>
-            <div style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600, marginTop: '4px' }}>
-              {patientCard?.cardNumber ? (
-                <button
-                  onClick={() => openCardViewer({
-                    patientName: user?.name,
-                    forPerson: 'Self',
-                    cardNumber: patientCard.cardNumber,
-                    bloodType: patientCard.bloodType,
-                    allergies: patientCard.allergies
-                  })}
-                  style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', padding: 0, fontWeight: 700 }}
-                >
-                  View Digital Card (የታካሚ ካርድ) →
-                </button>
-              ) : (
-                <span style={{ color: 'var(--text-muted)' }}>
-                  Auto-generates upon initial booking
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Section 1: Upcoming Consultations */}
-        <div style={{ marginBottom: '40px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <div>
-              <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                Your Clinic Consultations & Queue Spots
-              </h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                Appointments booked with allocated queue spots and clinic cards
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={() => setActiveTab('upcoming')}
-                className={`btn btn-sm ${activeTab === 'upcoming' ? 'btn-primary' : 'btn-secondary'}`}
-              >
-                Upcoming ({appointments.length})
+        {/* My appointments */}
+        <section style={{ marginBottom: '36px' }}>
+          <div className="pd-section-head">
+            <h2 className="pd-h2">My appointments</h2>
+            <div className="pd-tabs" role="tablist">
+              <button role="tab" aria-selected={activeTab === 'upcoming'} className={activeTab === 'upcoming' ? 'on' : ''} onClick={() => setActiveTab('upcoming')}>
+                Upcoming{appointments.length > 0 ? ` (${appointments.length})` : ''}
               </button>
-              <button
-                onClick={() => setActiveTab('past')}
-                className={`btn btn-sm ${activeTab === 'past' ? 'btn-primary' : 'btn-secondary'}`}
-              >
-                Past History
+              <button role="tab" aria-selected={activeTab === 'past'} className={activeTab === 'past' ? 'on' : ''} onClick={() => setActiveTab('past')}>
+                Past
               </button>
             </div>
           </div>
 
           {activeTab === 'upcoming' ? (
             loadingAppointments ? (
-              <div className="glass-panel" style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
-                <span className="spinner" style={{ marginRight: '8px' }} /> Loading active clinic appointments...
-              </div>
+              <div className="glass-panel pd-empty"><span className="spinner" style={{ marginRight: '8px' }} /> Loading…</div>
             ) : appointments.length === 0 ? (
-              <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px' }}>
-                <Calendar size={40} style={{ color: '#cbd5e1', marginBottom: '12px', display: 'inline-block' }} />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>No active appointments booked</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: '6px 0 16px' }}>
-                  Take a clinic card and reserve a consultation spot using our unified 4-step flow.
-                </p>
-                <button onClick={startUnifiedFlow} className="btn btn-primary btn-sm">
-                  <Calendar size={15} /> Book an Appointment (ቀጠሮ ያስይዙ)
-                </button>
+              <div className="glass-panel pd-empty">
+                <Calendar size={32} style={{ color: '#cbd5e1', marginBottom: '8px' }} />
+                <p style={{ margin: '0 0 14px' }}>No upcoming appointments. Pick a doctor and time below, or:</p>
+                <button onClick={startUnifiedFlow} className="btn btn-primary btn-sm"><Plus size={15} /> Book appointment</button>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '18px' }}>
+              <div className="pd-grid">
                 {appointments.map((apt) => {
                   const aptId = apt._id || apt.id;
-                  const doc = doctors.find(d => String(d._id) === String(apt.doctorId) || String(d.id) === String(apt.doctorId));
-                  const doctorName = apt.doctorName || doc?.name || 'Staff Physician';
-                  const specialty = apt.specialty || doc?.specialty || 'General Practice';
-                  const timeStr = apt.time || (apt.startTime && apt.endTime ? `${apt.startTime} - ${apt.endTime}` : (apt.startTime || 'Scheduled Time'));
-                  const roomStr = apt.room || doc?.location || 'Consultation Suite';
-                  const isScheduled = ['scheduled', 'confirmed'].includes(apt.status);
-
+                  const doc = doctors.find(d => String(d._id) === String(apt.doctorId));
+                  const doctorName = apt.doctorName || doc?.name || 'Doctor';
+                  const specialty = apt.specialty || doc?.specialty || '';
+                  const canCancel = ['scheduled', 'confirmed'].includes(apt.status);
                   return (
-                    <div key={aptId} className="glass-panel" style={{ padding: '24px', borderLeft: '4px solid #4f46e5', position: 'relative' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                            <span style={{
-                              fontSize: '0.72rem',
-                              fontWeight: 700,
-                              textTransform: 'uppercase',
-                              padding: '3px 8px',
-                              borderRadius: '6px',
-                              background: isScheduled ? '#ecfdf5' : '#fef3c7',
-                              color: isScheduled ? '#047857' : '#92400e'
-                            }}>
-                              ● {apt.status}
-                            </span>
-                            <span style={{
-                              fontSize: '0.72rem',
-                              fontWeight: 800,
-                              background: '#eef2ff',
-                              color: '#4338ca',
-                              padding: '3px 8px',
-                              borderRadius: '6px'
-                            }}>
-                              Queue #{apt.queueNumber}
-                            </span>
-                          </div>
-
-                          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)', margin: '2px 0' }}>
-                            {doctorName}
-                          </h3>
-                          <div style={{ fontSize: '0.82rem', color: '#4f46e5', fontWeight: 600 }}>{specialty}</div>
-                        </div>
-
-                        <span style={{
-                          fontSize: '0.75rem',
-                          background: '#f8fafc',
-                          border: '1px solid #e2e8f0',
-                          padding: '4px 10px',
-                          borderRadius: '20px',
-                          fontWeight: 700,
-                          color: '#334155'
-                        }}>
-                          For: {apt.forPerson || 'Self'}
-                        </span>
-                      </div>
-
-                      {/* Card and Spot Details */}
-                      <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}>
-                          <CreditCard size={15} style={{ color: '#4f46e5' }} />
-                          <span>Card: <strong style={{ fontFamily: 'monospace' }}>{apt.cardNumber}</strong></span>
-                          <span style={{ fontSize: '0.72rem', background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, marginLeft: '4px' }}>
-                            Paid 100 ETB
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => openCardViewer(apt)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ fontSize: '0.74rem', padding: '3px 8px' }}
-                        >
-                          View Card (ካርድ)
-                        </button>
-                      </div>
-
-                      <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', fontSize: '0.82rem', color: 'var(--text-muted)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Clock size={15} style={{ color: '#4f46e5' }} />
-                          <span>{apt.date} • {timeStr}</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <MapPin size={15} style={{ color: '#10b981' }} />
-                          <span>{roomStr}</span>
-                        </div>
-                      </div>
-
-                      {isScheduled && (
-                        <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                          <button
-                            onClick={() => handleCancelAppointment(aptId)}
-                            style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
-                          >
-                            Cancel Booking
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          ) : (
-            pastAppointments.length === 0 ? (
-              <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                <p>No past consultations or cancelled appointments found in your medical records.</p>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '18px' }}>
-                {pastAppointments.map((apt) => {
-                  const aptId = apt._id || apt.id;
-                  const doc = doctors.find(d => String(d._id) === String(apt.doctorId) || String(d.id) === String(apt.doctorId));
-                  const doctorName = apt.doctorName || doc?.name || 'Staff Physician';
-                  const specialty = apt.specialty || doc?.specialty || 'General Practice';
-                  const timeStr = apt.time || (apt.startTime && apt.endTime ? `${apt.startTime} - ${apt.endTime}` : (apt.startTime || ''));
-                  const isCompleted = apt.status === 'completed';
-
-                  return (
-                    <div
-                      key={aptId}
-                      className="glass-panel"
-                      style={{
-                        padding: '20px',
-                        borderLeft: `4px solid ${isCompleted ? '#10b981' : '#94a3b8'}`
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                        <div>
-                          <span style={{
-                            fontSize: '0.7rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            background: isCompleted ? '#ecfdf5' : '#f1f5f9',
-                            color: isCompleted ? '#047857' : '#64748b'
-                          }}>
-                            ● {apt.status}
-                          </span>
-                          <h4 style={{ margin: '6px 0 2px', fontSize: '1.05rem', fontWeight: 700 }}>
-                            {doctorName}
-                          </h4>
-                          <div style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600 }}>
-                            {specialty}
-                          </div>
-                        </div>
-                        <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', background: '#f8fafc', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                          {apt.cardNumber}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                        📅 {apt.date} • {timeStr}
-                      </div>
-
-                      {apt.cancelReason && (
-                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '10px', color: '#991b1b' }}>
-                          <strong>Reason for Cancellation:</strong> {apt.cancelReason}
-                        </div>
-                      )}
-
-                      {apt.doctorNotes && (
-                        <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '10px', color: '#334155' }}>
-                          <strong>Doctor Notes:</strong> {apt.doctorNotes}
-                        </div>
-                      )}
-
-                      {apt.prescription && (
-                        <div style={{ background: '#ecfdf5', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', marginTop: '6px', color: '#047857' }}>
-                          <strong>Prescription:</strong> {apt.prescription}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          )}
-        </div>
-
-        {/* Section 2: Doctor Directory with 1-Click Flow Initiation */}
-        <div id="doctor-directory">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '18px', flexWrap: 'wrap', gap: '10px' }}>
-            <div>
-              <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                Find a Doctor & Reserve a Consultation Spot
-              </h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                Browse certified physicians or click any time slot to enter the 4-step guided booking flow
-              </p>
-            </div>
-            <button onClick={startUnifiedFlow} className="btn btn-primary btn-sm">
-              <Calendar size={15} /> Open Booking Flow →
-            </button>
-          </div>
-
-          {/* Specialty Filter Buttons & Quick Date Bar */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '14px' }}>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {availableSpecialties.map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setSelectedSpecialty(filter)}
-                  className={`btn btn-sm ${selectedSpecialty === filter ? 'btn-primary' : 'btn-secondary'}`}
-                  style={{ textTransform: 'capitalize', fontSize: '0.8rem' }}
-                >
-                  {filter === 'all' ? 'All Specialties' : filter}
-                </button>
-              ))}
-            </div>
-
-            {/* Quick Consultation Date Selector */}
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f8fafc', padding: '4px 8px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Slots for:
-              </span>
-              {dateOptions.slice(0, 3).map((dObj) => (
-                <button
-                  key={dObj.iso}
-                  type="button"
-                  onClick={() => {
-                    setSelectedDateObj(dObj);
-                    setSelectedDate(dObj.label);
-                  }}
-                  className={`btn btn-sm ${selectedDateObj?.iso === dObj.iso ? 'btn-primary' : 'btn-secondary'}`}
-                  style={{ fontSize: '0.74rem', padding: '3px 8px', borderRadius: '6px' }}
-                >
-                  {dObj.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Doctor Cards Grid */}
-          {loadingDoctors ? (
-            <div className="glass-panel" style={{ padding: '36px', textAlign: 'center' }}>
-              <span className="spinner" style={{ marginRight: '8px' }} />
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>Loading verified medical staff from clinic database...</span>
-            </div>
-          ) : filteredPageDoctors.length === 0 ? (
-            <div className="glass-panel" style={{ padding: '36px', textAlign: 'center' }}>
-              <Stethoscope size={36} style={{ color: '#6366f1', margin: '0 auto 12px' }} />
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '6px' }}>
-                No Physicians Found
-              </h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', maxWidth: '420px', margin: '0 auto 14px' }}>
-                {selectedSpecialty !== 'all'
-                  ? `There are no doctors registered under "${selectedSpecialty}". Try selecting "All Specialties" to view all available physicians.`
-                  : 'No active doctors are currently registered in the clinic roster. Please check back soon or contact front desk reception.'}
-              </p>
-              {selectedSpecialty !== 'all' && (
-                <button onClick={() => setSelectedSpecialty('all')} className="btn btn-secondary btn-sm">
-                  View All Doctors
-                </button>
-              )}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: '18px' }}>
-              {filteredPageDoctors.map((doc) => {
-                const docId = doc._id || doc.id;
-                const docLiveSlots = cardSlotsMap[docId] || [];
-
-                return (
-                  <div key={docId} className="glass-panel" style={{ padding: '22px' }}>
-                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
-                      <div style={{
-                        width: '46px',
-                        height: '46px',
-                        borderRadius: '12px',
-                        background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '18px',
-                        fontWeight: 700
-                      }}>
-                        👨‍⚕️
+                    <article key={aptId} className="glass-panel pd-apt">
+                      <div className="pd-queue" title="Your place in the doctor's queue for that day">
+                        <span>Queue</span>
+                        <strong>{apt.queueNumber ? `#${apt.queueNumber}` : '—'}</strong>
                       </div>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {doc.name}
-                        </h3>
-                        <span style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 700 }}>
-                          {doc.specialty}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <MapPin size={14} style={{ color: '#6366f1', flexShrink: 0 }} />
-                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {doc.location}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Stethoscope size={14} style={{ color: '#059669', flexShrink: 0 }} />
-                        <span>{doc.experience} • Rating {doc.rating} ★</span>
-                      </div>
-                    </div>
-
-                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                          Available ({selectedDateObj?.label || 'Today'}):
-                        </span>
-                        <button
-                          onClick={() => handlePageDoctorOrSlotClick(doc)}
-                          style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: '0.76rem', fontWeight: 800, cursor: 'pointer', padding: 0 }}
-                        >
-                          Book Flow →
-                        </button>
-                      </div>
-
-                      {loadingCardSlots ? (
-                        <div style={{ fontSize: '0.76rem', color: '#94a3b8', padding: '6px 0' }}>
-                          <span className="spinner" style={{ marginRight: '6px' }} /> Checking open slots...
+                        <div className="pd-when">
+                          <Calendar size={14} /> {formatClinicDate(apt.date)} · {apt.startTime ? formatClinicRange(apt.startTime, apt.endTime) : ''}
                         </div>
-                      ) : docLiveSlots.length > 0 ? (
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {docLiveSlots.slice(0, 5).map((slotObj) => (
-                            <button
-                              key={slotObj._id}
-                              onClick={() => handlePageDoctorOrSlotClick(doc, slotObj)}
-                              className="btn btn-secondary btn-sm"
-                              style={{ fontSize: '0.76rem', padding: '5px 8px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
-                              title={`Reserve ${slotObj.startTime} - ${slotObj.endTime}`}
-                            >
-                              <Clock size={11} />
-                              <span>{slotObj.startTime}</span>
-                            </button>
-                          ))}
-                          {docLiveSlots.length > 5 && (
-                            <button
-                              onClick={() => handlePageDoctorOrSlotClick(doc)}
-                              className="btn btn-secondary btn-sm"
-                              style={{ fontSize: '0.74rem', padding: '5px 8px', color: '#4f46e5', fontWeight: 800 }}
-                            >
-                              +{docLiveSlots.length - 5} more
+                        <h3 className="pd-name">{doctorName}</h3>
+                        {specialty && <div className="pd-muted">{specialty}</div>}
+                        <div className="pd-meta">
+                          <span>For: <strong>{apt.forPerson || 'You'}</strong></span>
+                          {apt.cardNumber && (
+                            <button type="button" className="pd-link" onClick={() => openCardViewer(apt)}>
+                              <CreditCard size={13} /> {apt.cardNumber}
                             </button>
                           )}
                         </div>
-                      ) : (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '6px 10px', borderRadius: '8px', border: '1px dashed #e2e8f0' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>No open slots on this date</span>
-                          <button
-                            onClick={() => handlePageDoctorOrSlotClick(doc)}
-                            style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                          >
-                            Other Dates →
-                          </button>
+                        <div className="pd-foot">
+                          <span className="pd-note">Pay 100 ETB at reception on arrival</span>
+                          {canCancel && (
+                            <button type="button" className="pd-danger" onClick={() => handleCancelAppointment(aptId)}>Cancel</button>
+                          )}
                         </div>
-                      )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )
+          ) : pastAppointments.length === 0 ? (
+            <div className="glass-panel pd-empty">No past appointments yet.</div>
+          ) : (
+            <div className="pd-grid">
+              {pastAppointments.map((apt) => {
+                const aptId = apt._id || apt.id;
+                const doc = doctors.find(d => String(d._id) === String(apt.doctorId));
+                const isCompleted = apt.status === 'completed';
+                return (
+                  <article key={aptId} className="glass-panel" style={{ padding: '16px 18px', borderLeft: `4px solid ${isCompleted ? '#10b981' : '#cbd5e1'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'baseline' }}>
+                      <h3 className="pd-name" style={{ margin: 0 }}>{apt.doctorName || doc?.name || 'Doctor'}</h3>
+                      <span className={`pd-status ${isCompleted ? 'ok' : ''}`}>{isCompleted ? 'Completed' : 'Cancelled'}</span>
                     </div>
-                  </div>
+                    <div className="pd-muted" style={{ marginTop: '4px' }}>
+                      {formatClinicDate(apt.date)} · {apt.startTime ? formatClinicRange(apt.startTime, apt.endTime) : ''}
+                      {apt.forPerson ? ` · ${apt.forPerson}` : ''}
+                    </div>
+                    {apt.cancelReason && <div className="pd-box red"><strong>Reason:</strong> {apt.cancelReason}</div>}
+                    {apt.doctorNotes && <div className="pd-box"><strong>Doctor&apos;s notes:</strong> {apt.doctorNotes}</div>}
+                    {apt.prescription && <div className="pd-box green"><strong>Prescription:</strong> {apt.prescription}</div>}
+                  </article>
                 );
               })}
             </div>
           )}
-        </div>
+        </section>
+
+        {/* Book by doctor: pick a time straight from the list */}
+        <section id="doctor-directory">
+          <div className="pd-section-head">
+            <h2 className="pd-h2">Book with a doctor</h2>
+            <div className="pd-tabs" role="tablist" aria-label="Date">
+              {dateOptions.slice(0, 3).map((dObj) => (
+                <button
+                  key={dObj.iso}
+                  role="tab"
+                  aria-selected={selectedDateObj?.iso === dObj.iso}
+                  className={selectedDateObj?.iso === dObj.iso ? 'on' : ''}
+                  onClick={() => { setSelectedDateObj(dObj); setSelectedDate(dObj.label); }}
+                >
+                  {dObj.label.split(',')[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {availableSpecialties.length > 2 && (
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+              {availableSpecialties.map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setSelectedSpecialty(filter)}
+                  className={`pd-chip ${selectedSpecialty === filter ? 'on' : ''}`}
+                >
+                  {filter === 'all' ? 'All' : filter}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {loadingDoctors ? (
+            <div className="glass-panel pd-empty"><span className="spinner" style={{ marginRight: '8px' }} /> Loading doctors…</div>
+          ) : filteredPageDoctors.length === 0 ? (
+            <div className="glass-panel pd-empty">
+              {selectedSpecialty !== 'all'
+                ? <>No doctors in {selectedSpecialty}. <button type="button" className="pd-link" onClick={() => setSelectedSpecialty('all')}>Show all</button></>
+                : 'No doctors are available right now. Please contact reception.'}
+            </div>
+          ) : (
+            <div className="pd-grid">
+              {filteredPageDoctors.map((doc) => {
+                const docId = doc._id || doc.id;
+                const isToday = selectedDateObj?.iso === dateOptions[0]?.iso;
+                const now = clinicNowHHMM();
+                const openSlots = (cardSlotsMap[docId] || [])
+                  .filter(s => (s.status || 'available') === 'available')
+                  .filter(s => !isToday || s.startTime > now);
+                return (
+                  <article key={docId} className="glass-panel" style={{ padding: '18px' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+                      <div className="pd-avatar">{doc.name.replace(/^Dr\.?\s*/, '').charAt(0).toUpperCase()}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <h3 className="pd-name" style={{ margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.name}</h3>
+                        <div className="pd-muted">{[doc.specialty, doc.experience].filter(Boolean).join(' · ')}</div>
+                      </div>
+                    </div>
+
+                    {loadingCardSlots ? (
+                      <div className="pd-muted"><span className="spinner" style={{ marginRight: '6px' }} /> Checking times…</div>
+                    ) : openSlots.length > 0 ? (
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {openSlots.slice(0, 6).map((slotObj) => (
+                          <button
+                            key={slotObj._id}
+                            onClick={() => handlePageDoctorOrSlotClick(doc, slotObj)}
+                            className="pd-slot"
+                            title={formatClinicRange(slotObj.startTime, slotObj.endTime)}
+                          >
+                            {toEthiopianTime(slotObj.startTime)}
+                          </button>
+                        ))}
+                        {openSlots.length > 6 && (
+                          <button onClick={() => handlePageDoctorOrSlotClick(doc)} className="pd-slot more">+{openSlots.length - 6}</button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="pd-muted">
+                        No free times {selectedDateObj?.label?.split(',')[0]?.toLowerCase() === 'today' ? 'today' : 'on this day'}.{' '}
+                        <button type="button" className="pd-link" onClick={() => handlePageDoctorOrSlotClick(doc)}>Other days →</button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <style jsx>{`
+          .pd-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+          .pd-title { font-size: 1.6rem; font-weight: 800; color: var(--text-main); margin: 0; letter-spacing: -0.4px; }
+          .pd-sub { color: var(--text-muted); font-size: 0.92rem; margin: 4px 0 0; }
+          .pd-banner { display: flex; align-items: center; gap: 10px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; padding: 12px 16px; border-radius: 12px; margin-bottom: 20px; font-weight: 600; }
+          .pd-section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+          .pd-h2 { font-size: 1.15rem; font-weight: 800; color: var(--text-main); margin: 0; }
+          .pd-tabs { display: inline-flex; background: #f1f5f9; border-radius: 10px; padding: 3px; }
+          .pd-tabs button { border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; font-size: 0.82rem; font-weight: 700; color: #64748b; cursor: pointer; }
+          .pd-tabs button.on { background: #fff; color: #1e1b4b; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+          .pd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+          .pd-empty { padding: 28px 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem; display: flex; flex-direction: column; align-items: center; }
+          .pd-apt { padding: 16px; display: flex; gap: 14px; align-items: stretch; }
+          .pd-queue { flex-shrink: 0; width: 68px; border-radius: 12px; background: #eef2ff; color: #4338ca; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+          .pd-queue span { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+          .pd-queue strong { font-size: 1.5rem; font-weight: 800; line-height: 1.1; }
+          .pd-when { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 700; color: #4f46e5; }
+          .pd-name { font-size: 1.02rem; font-weight: 800; color: var(--text-main); margin: 4px 0 0; }
+          .pd-muted { font-size: 0.8rem; color: var(--text-muted); }
+          .pd-meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 0.8rem; color: #475569; margin-top: 8px; }
+          .pd-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
+          .pd-note { font-size: 0.74rem; color: #b45309; font-weight: 600; }
+          .pd-link { background: none; border: 0; padding: 0; color: #4f46e5; font-weight: 700; cursor: pointer; font-size: inherit; display: inline-flex; align-items: center; gap: 4px; font-family: inherit; }
+          .pd-link:hover { text-decoration: underline; }
+          .pd-danger { background: none; border: 0; color: #dc2626; font-weight: 700; font-size: 0.8rem; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+          .pd-danger:hover { background: #fef2f2; }
+          .pd-status { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #f1f5f9; color: #64748b; white-space: nowrap; }
+          .pd-status.ok { background: #ecfdf5; color: #047857; }
+          .pd-box { background: #f8fafc; border-radius: 8px; padding: 8px 10px; font-size: 0.8rem; margin-top: 8px; color: #334155; }
+          .pd-box.red { background: #fef2f2; color: #991b1b; }
+          .pd-box.green { background: #ecfdf5; color: #047857; }
+          .pd-chip { border: 1px solid #e2e8f0; background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; color: #475569; cursor: pointer; text-transform: capitalize; }
+          .pd-chip.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+          .pd-avatar { width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0; background: linear-gradient(135deg, #4f46e5, #06b6d4); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.05rem; }
+          .pd-slot { border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 8px; padding: 6px 10px; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+          .pd-slot:hover { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+          .pd-slot.more { background: #fff; color: #4f46e5; }
+          @media (max-width: 480px) { .pd-head .btn { width: 100%; justify-content: center; } .pd-grid { grid-template-columns: 1fr; } }
+        `}</style>
 
       </div>
 
@@ -1370,7 +1085,7 @@ export default function DashboardPage() {
             {flowStep === 'patient' && (
               <div>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginBottom: '16px' }}>
-                  Select who this clinic card is for. A 100 ETB official card fee will be payable at Step 4:
+                  Select who this visit is for. {CONSULTATION_FEE_NOTE}
                 </p>
 
                 {/* Recipient Segmented Selector */}
@@ -1437,7 +1152,7 @@ export default function DashboardPage() {
                         </div>
                         <div>
                           <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.7rem' }}>Clinic Card Number</span>
-                          <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{makeCardNumber(user?._id || '00001')}</strong>
+                          <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{patientCard?.cardNumber || cardNumberFor('self')}</strong>
                         </div>
                       </div>
                     </div>
@@ -1493,7 +1208,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', color: 'var(--text-muted)' }}>
                                   <div>DOB: {activeFam.dateOfBirth ? new Date(activeFam.dateOfBirth).toLocaleDateString() : 'N/A'} ({activeFam.gender})</div>
-                                  <div>Card: <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{makeCardNumber(activeFam._id)}</strong></div>
+                                  <div>Card: <strong style={{ fontFamily: 'monospace', color: '#4f46e5' }}>{cardNumberFor(activeFam._id)}</strong></div>
                                 </div>
                               </div>
                             );
@@ -1691,7 +1406,7 @@ export default function DashboardPage() {
                                 {doc.name}
                               </h4>
                               <span style={{ fontSize: '0.76rem', color: '#4f46e5', fontWeight: 600 }}>
-                                {doc.specialty} • {doc.location}
+                                {[doc.specialty, doc.location].filter(Boolean).join(" • ")}
                               </span>
                             </div>
                           </div>
@@ -1700,9 +1415,6 @@ export default function DashboardPage() {
                             <span style={{ fontSize: '0.72rem', background: '#ecfdf5', color: '#047857', padding: '2px 8px', borderRadius: '6px', fontWeight: 700 }}>
                               Available
                             </span>
-                            <div style={{ fontSize: '0.72rem', color: '#f59e0b', fontWeight: 700, marginTop: '4px' }}>
-                              ★ {doc.rating}
-                            </div>
                           </div>
                         </div>
 
@@ -1765,7 +1477,7 @@ export default function DashboardPage() {
                         {selectedDoctor?.name}
                       </div>
                       <div style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 600 }}>
-                        {selectedDoctor?.specialty} • {selectedDoctor?.location}
+                        {[selectedDoctor?.specialty, selectedDoctor?.location].filter(Boolean).join(" • ")}
                       </div>
                     </div>
                     <button
@@ -1832,7 +1544,7 @@ export default function DashboardPage() {
                             }}
                           >
                             <Clock size={13} />
-                            <span>{slotObj.startTime}</span>
+                            <span title={formatClinicRange(slotObj.startTime, slotObj.endTime)}>{toEthiopianTime(slotObj.startTime)}</span>
                             {isSelected && <Check size={13} />}
                           </button>
                         );
@@ -1886,7 +1598,7 @@ export default function DashboardPage() {
                         {selectedDoctor?.name}
                       </div>
                       <div style={{ color: '#4f46e5', fontWeight: 600, fontSize: '0.8rem' }}>
-                        {selectedDoctor?.specialty} • {selectedDoctor?.location}
+                        {[selectedDoctor?.specialty, selectedDoctor?.location].filter(Boolean).join(" • ")}
                       </div>
                     </div>
                     <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', background: '#eef2ff', color: '#4338ca', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
@@ -1906,7 +1618,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* 2. Official Ethiopian Card Issuance Fee Banner */}
+                {/* 2. Consultation fee: paid in person (there is no online payment) */}
                 <div style={{
                   background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
                   border: '1.5px solid #a7f3d0',
@@ -1915,17 +1627,18 @@ export default function DashboardPage() {
                   marginBottom: '16px',
                   display: 'flex',
                   justifyContent: 'space-between',
-                  alignItems: 'center'
+                  alignItems: 'center',
+                  gap: '12px'
                 }}>
                   <div>
                     <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: '#047857', fontWeight: 800, letterSpacing: '0.5px' }}>
-                      Official Clinic Card Fee (የካርድ ማውጫ ክፍያ)
+                      Consultation Fee (የምርመራ ክፍያ)
                     </div>
                     <div style={{ fontSize: '1.6rem', fontWeight: 900, color: '#064e3b', marginTop: '2px' }}>
                       100.00 <span style={{ fontSize: '1rem', fontWeight: 700, color: '#059669' }}>ETB</span>
                     </div>
-                    <span style={{ fontSize: '0.74rem', color: '#047857' }}>
-                      Standard fee to issue & activate digital clinic card
+                    <span style={{ fontSize: '0.78rem', color: '#047857', fontWeight: 600 }}>
+                      Pay at the clinic reception on arrival. Nothing is charged online.
                     </span>
                   </div>
                   <div style={{
@@ -1937,131 +1650,10 @@ export default function DashboardPage() {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontWeight: 900
+                    fontWeight: 900,
+                    flexShrink: 0
                   }}>
-                    💳
-                  </div>
-                </div>
-
-                {/* 3. Ethiopian Payment Gateway Selector */}
-                <div style={{ marginBottom: '16px' }}>
-                  <label className="form-label" style={{ fontWeight: 800, marginBottom: '8px', fontSize: '0.84rem' }}>
-                    Select Payment Gateway (የክፍያ ዘዴ ይምረጡ):
-                  </label>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
-                    {/* Telebirr */}
-                    <div
-                      onClick={() => setPaymentMethod('telebirr')}
-                      style={{
-                        border: paymentMethod === 'telebirr' ? '2px solid #0284c7' : '1px solid #e2e8f0',
-                        background: paymentMethod === 'telebirr' ? '#f0f9ff' : '#ffffff',
-                        borderRadius: '12px',
-                        padding: '12px',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '18px' }}>📱</span>
-                          <div>
-                            <div style={{ fontWeight: 800, color: '#0369a1', fontSize: '0.9rem' }}>Telebirr (ቴሌብር)</div>
-                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Instant Ethio Telecom mobile wallet payment</div>
-                          </div>
-                        </div>
-                        <div style={{
-                          width: '18px',
-                          height: '18px',
-                          borderRadius: '50%',
-                          border: paymentMethod === 'telebirr' ? '5px solid #0284c7' : '2px solid #cbd5e1'
-                        }} />
-                      </div>
-
-                      {paymentMethod === 'telebirr' && (
-                        <div style={{ marginTop: '10px', borderTop: '1px solid #e0f2fe', paddingTop: '8px' }}>
-                          <input
-                            type="text"
-                            className="form-control"
-                            placeholder="+251 9XX XXX XXX"
-                            value={paymentPhone}
-                            onChange={(e) => setPaymentPhone(e.target.value)}
-                            style={{ fontSize: '0.84rem', padding: '6px 10px' }}
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* CBE Birr */}
-                    <div
-                      onClick={() => setPaymentMethod('cbebirr')}
-                      style={{
-                        border: paymentMethod === 'cbebirr' ? '2px solid #7c2084' : '1px solid #e2e8f0',
-                        background: paymentMethod === 'cbebirr' ? '#fdf4ff' : '#ffffff',
-                        borderRadius: '12px',
-                        padding: '12px',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '18px' }}>🏦</span>
-                          <div>
-                            <div style={{ fontWeight: 800, color: '#7c2084', fontSize: '0.9rem' }}>CBE Birr (የኢትዮጵያ ንግድ ባንክ)</div>
-                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Commercial Bank of Ethiopia mobile banking</div>
-                          </div>
-                        </div>
-                        <div style={{
-                          width: '18px',
-                          height: '18px',
-                          borderRadius: '50%',
-                          border: paymentMethod === 'cbebirr' ? '5px solid #7c2084' : '2px solid #cbd5e1'
-                        }} />
-                      </div>
-
-                      {paymentMethod === 'cbebirr' && (
-                        <div style={{ marginTop: '10px', borderTop: '1px solid #fae8ff', paddingTop: '8px' }}>
-                          <input
-                            type="text"
-                            className="form-control"
-                            placeholder="09... or 1000..."
-                            value={paymentPhone}
-                            onChange={(e) => setPaymentPhone(e.target.value)}
-                            style={{ fontSize: '0.84rem', padding: '6px 10px' }}
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Chapa */}
-                    <div
-                      onClick={() => setPaymentMethod('chapa')}
-                      style={{
-                        border: paymentMethod === 'chapa' ? '2px solid #059669' : '1px solid #e2e8f0',
-                        background: paymentMethod === 'chapa' ? '#ecfdf5' : '#ffffff',
-                        borderRadius: '12px',
-                        padding: '12px',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '18px' }}>⚡</span>
-                          <div>
-                            <div style={{ fontWeight: 800, color: '#059669', fontSize: '0.9rem' }}>Chapa / Debit Card (ቻፓ)</div>
-                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>EthSwitch, Visa, Mastercard & instant checkout</div>
-                          </div>
-                        </div>
-                        <div style={{
-                          width: '18px',
-                          height: '18px',
-                          borderRadius: '50%',
-                          border: paymentMethod === 'chapa' ? '5px solid #059669' : '2px solid #cbd5e1'
-                        }} />
-                      </div>
-                    </div>
+                    🏥
                   </div>
                 </div>
 
@@ -2108,11 +1700,11 @@ export default function DashboardPage() {
                     {isProcessingPayment ? (
                       <>
                         <span className="spinner" />
-                        <span>Verifying 100 ETB...</span>
+                        <span>Confirming booking...</span>
                       </>
                     ) : (
                       <>
-                        <span>Pay 100 ETB & Complete Card Taking (ክፈል)</span>
+                        <span>Confirm Appointment (አረጋግጥ)</span>
                         <ArrowRight size={16} />
                       </>
                     )}
@@ -2131,13 +1723,13 @@ export default function DashboardPage() {
                 </div>
 
                 <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '4px' }}>
-                  Card Issued & Spot Secured!
+                  Appointment Confirmed!
                 </h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', maxWidth: '380px', margin: '0 auto 16px' }}>
-                  Card fee (100 ETB) verified and consultation spot officially registered in the clinic database.
+                  Your consultation spot is registered with the clinic. {CONSULTATION_FEE_NOTE}
                 </p>
 
-                {/* 1. Official Digital Clinic Card (Paid) */}
+                {/* 1. Patient's real clinic card */}
                 <div style={{
                   background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4338ca 100%)',
                   color: 'white',
@@ -2172,13 +1764,9 @@ export default function DashboardPage() {
                       <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Card Holder</span>
                       <strong style={{ display: 'block', color: '#ffffff' }}>{latestBookedApt.patientName}</strong>
                     </div>
-                    <div>
-                      <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Payment Status</span>
-                      <strong style={{ display: 'block', color: '#86efac' }}>● Paid 100 ETB ({latestBookedApt.paymentMethod})</strong>
-                    </div>
-                    <div>
-                      <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textTransform: 'uppercase' }}>TXN Reference</span>
-                      <strong style={{ display: 'block', fontFamily: 'monospace', color: '#ffffff', fontSize: '0.74rem' }}>{latestBookedApt.paymentTxnId}</strong>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Consultation Fee</span>
+                      <strong style={{ display: 'block', color: '#fde68a' }}>100 ETB — pay at reception on arrival</strong>
                     </div>
                   </div>
                 </div>
@@ -2189,7 +1777,7 @@ export default function DashboardPage() {
                     <div>
                       <div style={{ fontSize: '0.68rem', textTransform: 'uppercase', color: '#64748b', fontWeight: 700 }}>Allocated Queue Spot</div>
                       <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#4f46e5' }}>
-                        Queue #{latestBookedApt.queueNumber}
+                        {latestBookedApt.queueNumber ? `Queue #${latestBookedApt.queueNumber}` : 'Queue number pending'}
                       </div>
                     </div>
                     <span style={{ background: '#ecfdf5', color: '#047857', padding: '3px 10px', borderRadius: '20px', fontSize: '0.74rem', fontWeight: 800 }}>
@@ -2307,15 +1895,15 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <div style={{ fontSize: '0.66rem', color: '#cbd5e1', textTransform: 'uppercase' }}>Card Status</div>
-                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#86efac', marginTop: '2px' }}>
-                        ● Paid (100 ETB) & Active
+                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: activePatient.cardNumber && activePatient.cardNumber !== CARD_PENDING ? '#86efac' : '#fde68a', marginTop: '2px' }}>
+                        {activePatient.cardNumber && activePatient.cardNumber !== CARD_PENDING ? '● Active' : '● Issued at first booking'}
                       </div>
                     </div>
                   </div>
 
                   <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.12)', paddingTop: '8px', fontSize: '0.72rem', color: '#cbd5e1', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>TXN: <strong style={{ fontFamily: 'monospace', color: '#ffffff' }}>{activePatient.paymentTxnId || 'TXN-TB-2026-88192'}</strong></span>
-                    <span>Method: <strong style={{ color: '#86efac' }}>{activePatient.paymentMethod || 'Telebirr'}</strong></span>
+                    <span>Blood type: <strong style={{ color: '#ffffff' }}>{activePatient.bloodType || 'Not specified'}</strong></span>
+                    <span>Allergies: <strong style={{ color: '#ffffff' }}>{activePatient.allergies || 'None recorded'}</strong></span>
                   </div>
                 </div>
 

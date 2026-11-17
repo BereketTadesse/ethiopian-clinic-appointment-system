@@ -142,3 +142,22 @@ export const createDoctorSchema = z.object({
       message: 'Break must be inside the shift and breakEnd must be after breakStart', path: ['breakStart'],
     }),
 });
+
+// GET /staff/patients?search= — front desk patient lookup
+export const searchPatientsSchema = z.object({
+  query: z.object({
+    search: z.string().trim().min(2, 'Type at least 2 characters to search').max(100),
+  }),
+});
+
+// POST /staff/patients — front desk registers a walk-in patient (email optional)
+export const registerWalkInPatientSchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100),
+    phoneNumber: z.string().trim().min(9, 'Phone number is required').max(20),
+    gender: z.enum(['male', 'female', 'other']),
+    email: z.string().trim().email('Invalid email address').optional().or(z.literal('')),
+    address: z.string().trim().max(200).optional(),
+    birthDate: z.coerce.date().optional(),
+  }),
+});

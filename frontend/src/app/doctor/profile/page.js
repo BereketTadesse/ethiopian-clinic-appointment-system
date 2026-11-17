@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { clinicToday, formatClinicRange } from '@/lib/time';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -206,7 +207,7 @@ export default function DoctorProfilePage() {
 
       // 5. Fetch Today's Slots
       try {
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = clinicToday(); // Addis Ababa date, not UTC
         const slotsRes = await clinicApi.get(`/${userId}/slots?date=${todayStr}`);
         if (slotsRes.data?.success && slotsRes.data?.slots) {
           setTodaySlots(slotsRes.data.slots);
@@ -1053,12 +1054,12 @@ export default function DoctorProfilePage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', fontSize: '0.86rem' }}>
                 <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Consultation Hours</span>
-                  <strong style={{ fontSize: '1rem', color: '#1e1b4b' }}>{doctorProfile.startTime} - {doctorProfile.endTime}</strong>
+                  <strong style={{ fontSize: '1rem', color: '#1e1b4b' }}>{formatClinicRange(doctorProfile.startTime, doctorProfile.endTime)}</strong>
                 </div>
 
                 <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Lunch Break</span>
-                  <strong style={{ fontSize: '1rem', color: '#92400e' }}>{doctorProfile.breakStart} - {doctorProfile.breakEnd}</strong>
+                  <strong style={{ fontSize: '1rem', color: '#92400e' }}>{formatClinicRange(doctorProfile.breakStart, doctorProfile.breakEnd) || '—'}</strong>
                 </div>
 
                 <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '12px' }}>
@@ -1104,7 +1105,7 @@ export default function DoctorProfilePage() {
                       }}
                     >
                       <Clock size={13} style={{ color: slot.status === 'booked' ? '#4f46e5' : '#64748b' }} />
-                      {slot.startTime} - {slot.endTime}
+                      {formatClinicRange(slot.startTime, slot.endTime)}
                       {slot.status === 'booked' && (
                         <span style={{ fontSize: '0.68rem', background: '#4f46e5', color: 'white', padding: '1px 5px', borderRadius: '4px' }}>
                           Booked
